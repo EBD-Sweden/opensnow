@@ -45,8 +45,10 @@
   <h1>❄ OpenSnow — Pipeline &amp; Lineage</h1>
   <span class="meta" id="meta"></span>
   <span class="spacer"></span>
+  <span class="meta" id="runbar"></span>
   <a class="btn" href="/">SQL console</a>
   <a class="btn" id="dash" style="display:none" target="_blank" rel="noopener">Open dashboard ↗</a>
+  <button class="btn" id="runbtn" onclick="runPipeline()" style="display:none">▶ Run pipeline</button>
   <button class="btn" onclick="load()">Refresh</button>
 </header>
 <div class="wrap">
@@ -72,6 +74,7 @@ async function load() {
 
   const meta = document.getElementById("meta");
   meta.textContent = data.generated_at ? ("last run " + new Date(data.generated_at).toLocaleString()) : "";
+  updateRunBar(data);
   const dash = document.getElementById("dash");
   if (data.dashboards && data.dashboards.length) {
     dash.style.display = ""; dash.href = data.dashboards[0].url;
@@ -129,6 +132,33 @@ function drawEdges(nodes, elById) {
       svg.appendChild(p);
     }
   }
+}
+
+let polling = null;
+function updateRunBar(data) {
+  const btn = document.getElementById("runbtn");
+  const bar = document.getElementById("runbar");
+  const run = data.run || {};
+  btn.style.display = data.runnable ? "" : "none";
+  btn.disabled = !!run.running;
+  btn.textContent = run.running ? "● Running…" : "▶ Run pipeline";
+  let parts = [];
+  if (run.running) parts.push("running…");
+  else if (run.last_success === true) parts.push("✓ last run ok");
+  else if (run.last_success === false) parts.push("✗ last run failed");
+  if (run.next_run && !run.running) parts.push("next " + new Date(run.next_run).toLocaleTimeString());
+  if (run.schedule_secs) parts.push("every " + run.schedule_secs + "s");
+  bar.textContent = parts.join("  ·  ");
+  // poll while a run is in flight so the graph refreshes on completion
+  if (run.running && !polling) polling = setInterval(load, 2000);
+  if (!run.running && polling) { clearInterval(polling); polling = null; }
+}
+
+async function runPipeline() {
+  const btn = document.getElementById("runbtn");
+  btn.disabled = true; btn.textContent = "● Running…";
+  try { await fetch("/api/v1/pipeline/run", { method: "POST" }); } catch (e) {}
+  setTimeout(load, 600);
 }
 
 function showEmpty(html){
