@@ -76,6 +76,18 @@ cd sample_project
 dbt run --profiles-dir .
 ```
 
+The OpenSnow server must be started with trusted-local pgwire plus trusted SQL
+for dbt table materializations:
+
+```bash
+OPENSNOW_ENABLE_PGWIRE=1 OPENSNOW_TRUSTED_SQL=1 opensnow start --enable-pgwire
+```
+
+`OPENSNOW_TRUSTED_SQL=1` is an operator-only local/trusted deployment flag. It
+lifts the public-demo SQL gate on the pgwire path so dbt can issue `CREATE TABLE
+AS`, `DROP TABLE`, and session-control statements. Do not enable it on public
+unauthenticated demos.
+
 ## Supported features
 
 - Table materializations (CREATE TABLE AS)

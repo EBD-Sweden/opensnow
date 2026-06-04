@@ -809,7 +809,7 @@ See `crates/opensnow-auth/src/sso.rs` for full OIDC implementation details.
 
 ## 9. Connecting Clients
 
-The default public/local quickstart client path is HTTP (`http://localhost:8080`). PostgreSQL wire compatibility is disabled by default; use the examples below only for trusted local deployments where you explicitly started OpenSnow with `--enable-pgwire`, `OPENSNOW_ENABLE_PGWIRE=1`, or `[server].pg_enabled = true`, and bound port 5433 to localhost or another trusted private network.
+The default public/local quickstart client path is HTTP (`http://localhost:8080`). PostgreSQL wire compatibility is disabled by default; use the examples below only for trusted local deployments where you explicitly started OpenSnow with `--enable-pgwire`, `OPENSNOW_ENABLE_PGWIRE=1`, or `[server].pg_enabled = true`, and bound port 5433 to localhost or another trusted private network. By default pgwire still enforces the public-demo safe SQL gate; set `OPENSNOW_TRUSTED_SQL=1` only on trusted/local deployments when tools such as dbt need full DDL and session-control compatibility.
 
 Trusted-local pgwire examples after explicit opt-in:
 
@@ -831,13 +831,19 @@ conn = psycopg2.connect(
 # (or any PostgreSQL client) against the pgwire endpoint today.
 ```
 
+```bash
+# dbt needs both pgwire and trusted SQL enabled so table materializations can
+# issue CREATE TABLE AS / DROP TABLE and dbt session-control statements.
+OPENSNOW_ENABLE_PGWIRE=1 OPENSNOW_TRUSTED_SQL=1 opensnow start --enable-pgwire
+```
+
 ```yaml
-# dbt profiles.yml for trusted-local pgwire opt-in only:
+# dbt profiles.yml for trusted-local pgwire + trusted SQL opt-in only:
 opensnow:
   target: dev
   outputs:
     dev:
-      type: postgres
+      type: opensnow
       host: localhost
       port: 5433
       user: admin

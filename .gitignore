@@ -7,6 +7,7 @@
 .opensnow/
 *.db
 __pycache__/
+*.egg-info/
 deploy/helm/*/charts/
 deploy/terraform/.terraform/
 deploy/terraform/**/.terraform/

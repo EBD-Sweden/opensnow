@@ -49,6 +49,122 @@ fn pg_user_error(code: &str, message: impl Into<String>) -> PgWireError {
     )))
 }
 
+/// Whether the operator has opted into trusted full-SQL mode (lifts the
+/// public-demo SQL gate on the pgwire path). Default off.
+fn trusted_sql_enabled() -> bool {
+    std::env::var("OPENSNOW_TRUSTED_SQL")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Strip leading whitespace and SQL comments (dbt prefixes every statement with
+/// a `/* {...} */` metadata comment) so prefix matching sees the real keyword.
+fn strip_leading_sql_noise(sql: &str) -> &str {
+    let mut s = sql.trim_start();
+    loop {
+        if let Some(rest) = s.strip_prefix("--") {
+            s = rest
+                .find('\n')
+                .map(|i| &rest[i + 1..])
+                .unwrap_or("")
+                .trim_start();
+        } else if let Some(rest) = s.strip_prefix("/*") {
+            s = rest
+                .find("*/")
+                .map(|i| &rest[i + 2..])
+                .unwrap_or("")
+                .trim_start();
+        } else {
+            return s;
+        }
+    }
+}
+
+/// Session/transaction-control and schema statements that OpenSnow's
+/// single-schema engine does not model. In trusted mode these are acknowledged
+/// as no-ops so PG-protocol tools (dbt, psql scripts) can run without errors.
+/// Data-affecting DDL (CREATE TABLE AS, DROP TABLE, …) is NOT matched here and
+/// is forwarded to the engine.
+fn is_pg_session_noop(sql: &str) -> bool {
+    let up = strip_leading_sql_noise(sql).to_ascii_uppercase();
+    fn starts_with_keyword(sql: &str, keyword: &str) -> bool {
+        let Some(rest) = sql.strip_prefix(keyword) else {
+            return false;
+        };
+        rest.is_empty()
+            || rest
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_whitespace() || c == ';')
+    }
+
+    const NOOP_KEYWORDS: &[&str] = &[
+        "BEGIN",
+        "COMMIT",
+        "ROLLBACK",
+        "START TRANSACTION",
+        "END TRANSACTION",
+        "SAVEPOINT",
+        "RELEASE SAVEPOINT",
+        "SET",
+        "RESET",
+        "DISCARD",
+        "CREATE SCHEMA",
+        "DROP SCHEMA",
+    ];
+    NOOP_KEYWORDS.iter().any(|p| starts_with_keyword(&up, p))
+}
+
+#[cfg(test)]
+mod session_noop_tests {
+    use super::is_pg_session_noop;
+
+    #[test]
+    fn transaction_and_schema_statements_are_noops() {
+        for s in [
+            "BEGIN",
+            "begin;",
+            "COMMIT",
+            "ROLLBACK",
+            "START TRANSACTION",
+            "SET search_path TO public",
+            "set timezone='UTC'",
+            "RESET ALL",
+            "CREATE SCHEMA IF NOT EXISTS analytics",
+            "DROP SCHEMA analytics",
+            // dbt prefixes every statement with a metadata comment.
+            "/* {\"app\":\"dbt\"} */\ncreate schema if not exists \"opensnow\".\"public\"",
+            "-- a comment\nBEGIN",
+        ] {
+            assert!(is_pg_session_noop(s), "{s} should be a no-op");
+        }
+    }
+
+    #[test]
+    fn data_ddl_is_not_a_noop() {
+        for s in [
+            "CREATE TABLE x AS SELECT 1",
+            "DROP TABLE x",
+            "SELECT 1",
+            "DROP TABLE IF EXISTS public.mart",
+            "BEGINNING OF INVALID SQL",
+            "SETTING search_path TO public",
+            "CREATE SCHEMATICS bad",
+            "INSERT INTO x VALUES (1)",
+        ] {
+            assert!(
+                !is_pg_session_noop(s),
+                "{s} must be forwarded to the engine"
+            );
+        }
+    }
+}
+
 pub struct OpenSnowPgHandler {
     handle: EngineHandle,
     auth: Option<AuthState>,
@@ -279,7 +395,19 @@ impl SimpleQueryHandler for OpenSnowPgHandler {
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
         tracing::info!("PG query: {}", query);
-        let query = validate_demo_sql(query).map_err(|message| pg_user_error("0A000", message))?;
+        // Trusted-SQL mode (operator opt-in via OPENSNOW_TRUSTED_SQL) lifts the
+        // public-demo SQL gate so PG-protocol tools like dbt can drive full DDL
+        // on a trusted/local deployment. Session/transaction-control and schema
+        // statements are acked as no-ops since OpenSnow uses a single catalog
+        // schema and does not model interactive transactions.
+        let query = if trusted_sql_enabled() {
+            if is_pg_session_noop(query) {
+                return Ok(vec![Response::Execution(Tag::new("OK"))]);
+            }
+            query.to_string()
+        } else {
+            validate_demo_sql(query).map_err(|message| pg_user_error("0A000", message))?
+        };
 
         let auth_context = if let Some(auth_state) = &self.auth {
             let raw = client

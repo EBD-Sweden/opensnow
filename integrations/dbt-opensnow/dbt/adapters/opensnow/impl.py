@@ -3,6 +3,7 @@ from typing import List, Optional, Set
 from dbt.adapters.postgres.impl import PostgresAdapter
 from dbt.adapters.opensnow.connections import OpenSnowConnectionManager
 from dbt.adapters.opensnow.column import OpenSnowColumn
+from dbt.adapters.opensnow.relation import OpenSnowRelation
 
 from dbt.adapters.base.relation import BaseRelation
 from dbt_common.utils import AttrDict
@@ -18,6 +19,7 @@ class OpenSnowAdapter(PostgresAdapter):
 
     ConnectionManager = OpenSnowConnectionManager
     Column = OpenSnowColumn
+    Relation = OpenSnowRelation
 
     @classmethod
     def date_function(cls) -> str:
@@ -74,6 +76,12 @@ class OpenSnowAdapter(PostgresAdapter):
     def verify_database(self, database: str) -> str:
         """OpenSnow may not support cross-database queries; just return the database name."""
         return database
+
+    def _link_cached_database_relations(self, schemas: Set[str]) -> None:
+        """No-op: OpenSnow does not expose pg_depend, so cross-relation
+        dependency links cannot be (and need not be) cached. dbt still builds
+        models in dependency order from the manifest ref() graph."""
+        return None
 
     @classmethod
     def is_cancelable(cls) -> bool:

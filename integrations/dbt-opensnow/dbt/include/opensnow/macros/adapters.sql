@@ -1,6 +1,9 @@
+{# OpenSnow requires a bare, unqualified, unquoted relation name everywhere
+   (no catalog/schema, no quotes). Force that explicitly so it holds even for the
+   model's own `this` relation, whose policy can otherwise leak the schema. #}
 {% macro opensnow__create_table_as(temporary, relation, sql) -%}
   {%- set tmp = "temporary " if temporary else "" -%}
-  create {{ tmp }}table {{ relation }}
+  create {{ tmp }}table {{ relation.include(database=false, schema=false) }}
   as (
     {{ sql }}
   );
@@ -8,7 +11,7 @@
 
 
 {% macro opensnow__create_view_as(relation, sql) -%}
-  create or replace view {{ relation }}
+  create or replace view {{ relation.include(database=false, schema=false) }}
   as (
     {{ sql }}
   );
@@ -18,12 +21,9 @@
 {% macro opensnow__drop_relation(relation) -%}
   {% call statement('drop_relation', auto_begin=False) %}
     {%- if relation.type == 'view' -%}
-      drop view if exists {{ relation }} cascade
-    {%- elif relation.type == 'table' -%}
-      drop table if exists {{ relation }} cascade
+      drop view if exists {{ relation.include(database=false, schema=false) }}
     {%- else -%}
-      drop table if exists {{ relation }} cascade;
-      drop view if exists {{ relation }} cascade
+      drop table if exists {{ relation.include(database=false, schema=false) }}
     {%- endif -%}
   {% endcall %}
 {%- endmacro %}
@@ -89,3 +89,10 @@
     path={"identifier": tmp_identifier, "schema": base_relation.schema}
   )) %}
 {% endmacro %}
+
+
+{# OpenSnow does not expose pg_catalog dependency views; relation-dependency
+   detection (used for cascade) is not needed for the flat model graph. #}
+{% macro opensnow__get_relations() -%}
+  {{ return([]) }}
+{%- endmacro %}
