@@ -154,6 +154,12 @@ table.data tr:hover td { background: rgba(33,38,45,0.65); }
       <label for="sql">SQL editor</label>
       <textarea id="sql" spellcheck="false" autocomplete="off">SHOW TABLES</textarea>
       <div class="status-bar" id="status-bar">Run a query to see results.</div>
+      <div id="pager" style="display:none;align-items:center;gap:10px;margin:8px 0;font-size:13px;color:#8b949e">
+        <button type="button" id="prev-page" class="copy-btn" style="padding:4px 10px">‹ Prev</button>
+        <span id="page-label"></span>
+        <button type="button" id="next-page" class="copy-btn" style="padding:4px 10px">Next ›</button>
+        <span style="color:#6e7681">100 rows/page (server-side LIMIT/OFFSET)</span>
+      </div>
       <div class="results-wrap" id="results">
         <div class="empty"><h3>No results yet</h3><p>Load demo data, choose a sample query, then press Run query.</p></div>
       </div>
@@ -311,38 +317,77 @@ psql -h localhost -p 5433</pre>
     }
   }
 
-  async function runQuery() {
-    var sql = sqlEl.value.trim();
-    if (!sql) {
-      setText(statusBar, 'Enter SQL or pick a sample query first.', 'warn');
-      return;
+  var PAGE_SIZE = 100;
+  var pageState = { base: '', page: 0, paginated: false };
+  var pagerEl = document.getElementById('pager');
+  var prevBtn = document.getElementById('prev-page');
+  var nextBtn = document.getElementById('next-page');
+  var pageLabel = document.getElementById('page-label');
+
+  // A read query we can safely paginate: starts with SELECT/WITH and has no
+  // top-level LIMIT of its own (we respect a user-supplied LIMIT and skip paging).
+  function isPaginatable(sql) {
+    var u = sql.replace(/;+\s*$/, '').trim().toUpperCase();
+    return (u.indexOf('SELECT') === 0 || u.indexOf('WITH') === 0) && !/\bLIMIT\b/.test(u);
+  }
+
+  async function runQuery(reset) {
+    var raw = sqlEl.value.trim();
+    if (!raw) { setText(statusBar, 'Enter SQL or pick a sample query first.', 'warn'); return; }
+    if (reset !== false) {
+      pageState.base = raw.replace(/;+\s*$/, '');
+      pageState.paginated = isPaginatable(raw);
+      pageState.page = 0;
     }
-    runBtn.disabled = true;
-    runBtn.textContent = 'Running…';
+    var effectiveSql = pageState.paginated
+      ? pageState.base + ' LIMIT ' + PAGE_SIZE + ' OFFSET ' + (pageState.page * PAGE_SIZE)
+      : pageState.base;
+
+    runBtn.disabled = true; runBtn.textContent = 'Running…';
     setText(statusBar, 'Running query…', 'warn');
     var start = performance.now();
     try {
       var data = await fetchJson('/api/v1/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql: sql })
+        body: JSON.stringify({ sql: effectiveSql })
       });
       var elapsedMs = Math.round(performance.now() - start);
       if (data.status === 'ok') {
-        renderRows(parseNdjson(data.data || ''));
-        setText(statusBar, (data.rows || 0) + ' rows · ' + elapsedMs + ' ms', 'ok');
+        var rows = parseNdjson(data.data || '');
+        renderRows(rows);
+        updatePager(rows.length);
+        if (pageState.paginated) {
+          var from = pageState.page * PAGE_SIZE + 1;
+          setText(statusBar, 'rows ' + from + '–' + (from + rows.length - 1) + ' · ' + elapsedMs + ' ms', 'ok');
+        } else {
+          setText(statusBar, (data.rows || 0) + ' rows · ' + elapsedMs + ' ms', 'ok');
+        }
       } else {
         showError(data.message || 'Unknown query error');
         setText(statusBar, 'Query error · ' + elapsedMs + ' ms', 'err');
+        pagerEl.style.display = 'none';
       }
     } catch (err) {
       showError('Connection failed: ' + err.message + '\n\nIf auth is enabled, use the token flow from docs/DEPLOYMENT.md or test with the API directly.');
       setText(statusBar, 'Connection error', 'err');
+      pagerEl.style.display = 'none';
     } finally {
-      runBtn.disabled = false;
-      runBtn.textContent = 'Run query';
+      runBtn.disabled = false; runBtn.textContent = 'Run query';
     }
   }
+
+  function updatePager(rowCount) {
+    if (!pageState.paginated) { pagerEl.style.display = 'none'; return; }
+    pagerEl.style.display = 'flex';
+    pageLabel.textContent = 'Page ' + (pageState.page + 1);
+    prevBtn.disabled = pageState.page === 0;
+    nextBtn.disabled = rowCount < PAGE_SIZE; // last page when fewer than a full page
+  }
+  prevBtn.addEventListener('click', function () {
+    if (pageState.page > 0) { pageState.page--; runQuery(false); }
+  });
+  nextBtn.addEventListener('click', function () { pageState.page++; runQuery(false); });
 
   sampleEl.addEventListener('change', function () { sqlEl.value = sampleEl.value; });
   runBtn.addEventListener('click', runQuery);
