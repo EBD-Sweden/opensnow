@@ -147,7 +147,7 @@ function updateRunBar(data) {
   else if (run.last_success === true) parts.push("✓ last run ok");
   else if (run.last_success === false) parts.push("✗ last run failed");
   if (run.next_run && !run.running) parts.push("next " + new Date(run.next_run).toLocaleTimeString());
-  if (run.schedule_secs) parts.push("every " + run.schedule_secs + "s");
+  if (run.schedule) parts.push(run.schedule);
   bar.textContent = parts.join("  ·  ");
   // poll while a run is in flight so the graph refreshes on completion
   if (run.running && !polling) polling = setInterval(load, 2000);

@@ -22,6 +22,7 @@ jsonwebtoken = "9"
 arrow.workspace = true
 parquet.workspace = true
 chrono.workspace = true
+cron = "0.12"
 rusqlite.workspace = true
 argon2 = "0.5"
 pgwire = "0.28"

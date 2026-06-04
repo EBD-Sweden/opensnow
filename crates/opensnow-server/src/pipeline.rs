@@ -1,18 +1,23 @@
-//! Pipeline / lineage view + a simple dependency-aware scheduler.
+//! Pipeline / lineage view + a dependency-aware scheduler.
 //!
 //! Surfaces the dbt model DAG (`manifest.json`) plus the last run's per-model
 //! status (`run_results.json`) so OpenSnow's web UI can visualize each ETL
 //! step. It can also *run* the pipeline: `dbt run` builds models in dependency
-//! order (dbt resolves the DAG from the manifest), on demand or on an interval.
+//! order (dbt resolves the DAG from the manifest), on demand or on a schedule.
 //!
 //! Operator config (trusted/local; default off):
-//! - `OPENSNOW_DBT_PROJECT_DIR`  — dbt project dir; enables runs.
-//! - `OPENSNOW_DBT_EXECUTABLE`   — dbt binary (default `dbt`).
-//! - `OPENSNOW_DBT_SCHEDULE_SECS`— auto-run interval in seconds (unset = off).
-//! - `OPENSNOW_DBT_ARTIFACTS_DIR`— manifest/run_results dir (default `<project>/target`).
+//! - `OPENSNOW_DBT_PROJECT_DIR`   — dbt project dir; enables runs.
+//! - `OPENSNOW_DBT_EXECUTABLE`    — dbt binary (default `dbt`).
+//! - `OPENSNOW_DBT_SCHEDULE_CRON` — cron expression (5 or 6 field); preferred.
+//! - `OPENSNOW_DBT_SCHEDULE_SECS` — fixed interval in seconds (fallback).
+//! - `OPENSNOW_DBT_ARTIFACTS_DIR` — manifest/run_results dir (default `<project>/target`).
 //! - `OPENSNOW_DASHBOARD_URL` / `OPENSNOW_DASHBOARD_NAME` — downstream dashboard link.
+//!
+//! The read-only view (`/pipeline`, `GET /api/v1/pipeline`) is public; the
+//! trigger (`POST /api/v1/pipeline/run`) is admin-scoped when auth is enabled.
 
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,6 +27,7 @@ use axum::{
     response::Html,
     routing::{get, post},
 };
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 const PIPELINE_UI: &str = include_str!("../static/pipeline.html");
@@ -34,7 +40,8 @@ struct RunState {
     last_success: Option<bool>,
     last_log_tail: Option<String>,
     next_run: Option<String>,
-    schedule_secs: Option<u64>,
+    /// Human-readable schedule description, e.g. `cron: 0 6 * * *` or `every 600s`.
+    schedule: Option<String>,
 }
 
 #[derive(Clone)]
@@ -42,23 +49,30 @@ struct PipelineState {
     run: Arc<Mutex<RunState>>,
 }
 
-pub fn router() -> Router {
+/// Read-only public router + admin-scoped trigger router (sharing one state).
+pub struct PipelineRouters {
+    pub public: Router,
+    pub admin: Router,
+}
+
+pub fn build() -> PipelineRouters {
     let state = PipelineState {
         run: Arc::new(Mutex::new(RunState::default())),
     };
-    if let (Some(secs), Some(_)) = (schedule_secs(), dbt_project_dir()) {
-        {
-            let mut s = state.run.lock().expect("run state lock");
-            s.schedule_secs = Some(secs);
-            s.next_run = Some(now_plus(secs));
+    if dbt_project_dir().is_some() {
+        if let Some((schedule, desc)) = configured_schedule() {
+            state.run.lock().expect("run state lock").schedule = Some(desc);
+            spawn_scheduler(state.clone(), schedule);
         }
-        spawn_scheduler(state.clone(), secs);
     }
-    Router::new()
+    let public = Router::new()
         .route("/pipeline", get(pipeline_ui))
         .route("/api/v1/pipeline", get(pipeline_data))
+        .with_state(state.clone());
+    let admin = Router::new()
         .route("/api/v1/pipeline/run", post(run_pipeline))
-        .with_state(state)
+        .with_state(state);
+    PipelineRouters { public, admin }
 }
 
 async fn pipeline_ui() -> Html<&'static str> {
@@ -78,13 +92,6 @@ fn dbt_executable() -> String {
     std::env::var("OPENSNOW_DBT_EXECUTABLE").unwrap_or_else(|_| "dbt".to_string())
 }
 
-fn schedule_secs() -> Option<u64> {
-    std::env::var("OPENSNOW_DBT_SCHEDULE_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|s| *s > 0)
-}
-
 fn artifacts_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("OPENSNOW_DBT_ARTIFACTS_DIR") {
         if !dir.trim().is_empty() {
@@ -97,12 +104,54 @@ fn artifacts_dir() -> PathBuf {
     PathBuf::from("dbt/target")
 }
 
-fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339()
+/// A resolved schedule: either a fixed interval or a parsed cron expression.
+enum Schedule {
+    Interval(u64),
+    Cron(Box<cron::Schedule>),
 }
 
-fn now_plus(secs: u64) -> String {
-    (chrono::Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339()
+/// Accept standard 5-field cron (`min hour dom mon dow`) by prepending a
+/// seconds field, or pass a 6/7-field expression straight to the `cron` crate.
+fn parse_cron(expr: &str) -> Option<cron::Schedule> {
+    let normalized = if expr.split_whitespace().count() == 5 {
+        format!("0 {expr}")
+    } else {
+        expr.to_string()
+    };
+    cron::Schedule::from_str(&normalized).ok()
+}
+
+fn configured_schedule() -> Option<(Schedule, String)> {
+    if let Ok(expr) = std::env::var("OPENSNOW_DBT_SCHEDULE_CRON") {
+        let expr = expr.trim().to_string();
+        if !expr.is_empty() {
+            return match parse_cron(&expr) {
+                Some(s) => Some((Schedule::Cron(Box::new(s)), format!("cron: {expr}"))),
+                None => {
+                    tracing::warn!(
+                        "invalid OPENSNOW_DBT_SCHEDULE_CRON '{expr}'; scheduler disabled"
+                    );
+                    None
+                }
+            };
+        }
+    }
+    let secs = std::env::var("OPENSNOW_DBT_SCHEDULE_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)?;
+    Some((Schedule::Interval(secs), format!("every {secs}s")))
+}
+
+fn next_fire(schedule: &Schedule) -> Option<DateTime<Utc>> {
+    match schedule {
+        Schedule::Interval(secs) => Some(Utc::now() + chrono::Duration::seconds(*secs as i64)),
+        Schedule::Cron(s) => s.upcoming(Utc).next(),
+    }
+}
+
+fn now_iso() -> String {
+    Utc::now().to_rfc3339()
 }
 
 fn tail_lines(text: &str, n: usize) -> String {
@@ -163,15 +212,19 @@ async fn do_dbt_run(state: PipelineState, project: PathBuf) {
             s.last_log_tail = Some(format!("failed to launch dbt: {e}"));
         }
     }
-    if let Some(secs) = s.schedule_secs {
-        s.next_run = Some(now_plus(secs));
-    }
 }
 
-fn spawn_scheduler(state: PipelineState, secs: u64) {
+fn spawn_scheduler(state: PipelineState, schedule: Schedule) {
     tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(secs)).await;
+        while let Some(next) = next_fire(&schedule) {
+            if let Ok(mut s) = state.run.lock() {
+                s.next_run = Some(next.to_rfc3339());
+            }
+            let wait = (next - Utc::now())
+                .to_std()
+                .unwrap_or(Duration::from_secs(1));
+            tokio::time::sleep(wait).await;
+
             let Some(project) = dbt_project_dir() else {
                 continue;
             };
@@ -306,4 +359,22 @@ async fn pipeline_data(State(state): State<PipelineState>) -> Json<Value> {
         "nodes": nodes,
         "dashboards": dashboards,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_five_and_six_field_cron() {
+        assert!(parse_cron("0 6 * * *").is_some()); // 5-field, daily 06:00
+        assert!(parse_cron("0 0 6 * * *").is_some()); // 6-field
+        assert!(parse_cron("not a cron").is_none());
+    }
+
+    #[test]
+    fn interval_next_fire_is_in_the_future() {
+        let n = next_fire(&Schedule::Interval(600)).unwrap();
+        assert!(n > Utc::now());
+    }
 }

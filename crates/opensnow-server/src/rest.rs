@@ -127,6 +127,12 @@ pub fn create_router_with_auth_and_buffer(
         )
         .with_state(handle);
 
+    // Pipeline/lineage view (read-only, public) + the run trigger (admin-scoped
+    // when auth is enabled).
+    let pipeline = crate::pipeline::build();
+    let pipeline_public = pipeline.public;
+    let mut pipeline_admin = pipeline.admin;
+
     let mut router = Router::new()
         .route("/", get(query_ui))
         .route("/docs/DEPLOYMENT.md", get(deployment_doc))
@@ -167,6 +173,9 @@ pub fn create_router_with_auth_and_buffer(
         table_admin_routes = table_admin_routes
             .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
             .route_layer(auth_layer.clone());
+        pipeline_admin = pipeline_admin
+            .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
+            .route_layer(auth_layer.clone());
         admin = admin
             .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
             .route_layer(auth_layer.clone());
@@ -186,8 +195,9 @@ pub fn create_router_with_auth_and_buffer(
         .merge(admin)
         .merge(crate::admin::auth_login_router(sso_manager, auth.clone()))
         .merge(dbt)
-        // Read-only pipeline/lineage view (dbt DAG + last-run status).
-        .merge(crate::pipeline::router())
+        // Pipeline/lineage view (public read-only) + admin-scoped run trigger.
+        .merge(pipeline_public)
+        .merge(pipeline_admin)
         .merge(ingest_batch_routes)
         .merge(ingest_status_routes)
         // Tenant resolution runs for every request — public and protected.
