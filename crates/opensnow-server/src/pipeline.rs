@@ -334,6 +334,10 @@ async fn pipeline_data(State(state): State<PipelineState>) -> Json<Value> {
                 "depends_on": depends_on,
                 "status": status,
                 "execution_time": exec,
+                // The compiled SQL is exactly what OpenSnow executes (CREATE
+                // TABLE AS <sql>); raw_sql keeps the dbt ref()/source() form.
+                "sql": node.get("compiled_code").and_then(Value::as_str),
+                "raw_sql": node.get("raw_code").and_then(Value::as_str),
             }));
         }
     }
