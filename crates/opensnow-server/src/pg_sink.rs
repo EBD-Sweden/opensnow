@@ -10,6 +10,10 @@ use arrow::array::{Array, ArrayRef, RecordBatch, StringArray};
 use arrow::compute::cast;
 use arrow::datatypes::DataType;
 use opensnow_core::EngineHandle;
+use std::time::Duration;
+
+const DEFAULT_PG_EXPORT_TIMEOUT_SECS: u64 = 30;
+const MAX_PG_EXPORT_TIMEOUT_SECS: u64 = 300;
 
 /// How to treat an existing target table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +74,23 @@ fn sql_literal(value: &str, quote: bool) -> String {
     }
 }
 
+fn postgres_network_timeout_from_env_value(raw: Option<&str>) -> Duration {
+    let secs = raw
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(DEFAULT_PG_EXPORT_TIMEOUT_SECS)
+        .min(MAX_PG_EXPORT_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+fn postgres_network_timeout_duration() -> Duration {
+    postgres_network_timeout_from_env_value(
+        std::env::var("OPENSNOW_PG_EXPORT_TIMEOUT_SECS")
+            .ok()
+            .as_deref(),
+    )
+}
+
 /// Run `sql` in OpenSnow and load the result set into `schema.table` in the
 /// Postgres database addressed by `dsn`. Returns the number of rows written.
 pub async fn export_to_postgres(
@@ -97,9 +118,14 @@ pub async fn export_to_postgres(
         .map(|f| (f.name().clone(), pg_type(f.data_type())))
         .collect();
 
-    let (client, connection) = tokio_postgres::connect(dsn, tokio_postgres::NoTls)
-        .await
-        .context("connect to target Postgres")?;
+    let network_timeout = postgres_network_timeout_duration();
+    let (client, connection) = tokio::time::timeout(
+        network_timeout,
+        tokio_postgres::connect(dsn, tokio_postgres::NoTls),
+    )
+    .await
+    .context("connect to target Postgres timed out")?
+    .context("connect to target Postgres")?;
     // Drive the connection in the background for the duration of this call.
     let conn_task = tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -108,7 +134,12 @@ pub async fn export_to_postgres(
     });
 
     let qualified = format!("{}.{}", quote_ident(schema), quote_ident(table));
-    let result = load(&client, &cols, &batches, &qualified, schema, mode).await;
+    let result = tokio::time::timeout(
+        network_timeout,
+        load(&client, &cols, &batches, &qualified, schema, mode),
+    )
+    .await
+    .context("load rows into target Postgres timed out")?;
     drop(client); // closes the connection, lets conn_task finish
     let _ = conn_task.await;
     result
@@ -228,5 +259,25 @@ mod tests {
         assert_eq!(WriteMode::parse("replace").unwrap(), WriteMode::Replace);
         assert_eq!(WriteMode::parse("append").unwrap(), WriteMode::Append);
         assert!(WriteMode::parse("nonsense").is_err());
+    }
+
+    #[test]
+    fn postgres_network_timeout_uses_bounded_default_and_env_override() {
+        assert_eq!(
+            postgres_network_timeout_from_env_value(None),
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(
+            postgres_network_timeout_from_env_value(Some("2")),
+            std::time::Duration::from_secs(2)
+        );
+        assert_eq!(
+            postgres_network_timeout_from_env_value(Some("0")),
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(
+            postgres_network_timeout_from_env_value(Some("999")),
+            std::time::Duration::from_secs(300)
+        );
     }
 }

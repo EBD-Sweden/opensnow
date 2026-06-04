@@ -326,6 +326,22 @@ fn error_json(code: StatusCode, message: &str) -> Response {
     (code, Json(json!({ "status": "error", "message": message }))).into_response()
 }
 
+/// Serialize a full result set (every batch/partition) to newline-delimited
+/// JSON. Writing only the first batch would silently truncate multi-batch
+/// results — e.g. partitioned aggregate/window output — while the reported row
+/// count still reflected the full total.
+fn batches_to_ndjson(batches: &[arrow::array::RecordBatch]) -> String {
+    if batches.is_empty() {
+        return String::new();
+    }
+    let refs: Vec<&arrow::array::RecordBatch> = batches.iter().collect();
+    let buf = Vec::new();
+    let mut writer = arrow::json::LineDelimitedWriter::new(buf);
+    writer.write_batches(&refs).ok();
+    writer.finish().ok();
+    String::from_utf8(writer.into_inner()).unwrap_or_default()
+}
+
 #[derive(serde::Deserialize)]
 struct ExportPostgresRequest {
     /// Query to run in OpenSnow; its result set is written to Postgres.
@@ -357,7 +373,7 @@ async fn export_postgres(
         Ok(m) => m,
         Err(e) => return error_json(StatusCode::BAD_REQUEST, &e.to_string()),
     };
-    let sql = match validate_demo_sql(&req.sql) {
+    let sql = match validate_export_postgres_sql(&req.sql) {
         Ok(s) => s,
         Err(e) => return error_json(StatusCode::BAD_REQUEST, &e),
     };
@@ -630,6 +646,143 @@ fn validate_demo_sql(sql: &str) -> Result<String, String> {
     Ok(statement)
 }
 
+fn sql_keywords_outside_literals(sql: &str) -> Vec<String> {
+    let mut keywords = Vec::new();
+    let mut current = String::new();
+    let mut chars = sql.chars().peekable();
+    let mut quote: Option<char> = None;
+    let mut line_comment = false;
+    let mut block_comment = false;
+
+    while let Some(ch) = chars.next() {
+        if line_comment {
+            if ch == '\n' {
+                line_comment = false;
+            }
+            continue;
+        }
+        if block_comment {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                block_comment = false;
+            }
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                if chars.peek() == Some(&q) {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            continue;
+        }
+
+        if ch == '-' && chars.peek() == Some(&'-') {
+            chars.next();
+            line_comment = true;
+            if !current.is_empty() {
+                keywords.push(std::mem::take(&mut current).to_ascii_uppercase());
+            }
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            block_comment = true;
+            if !current.is_empty() {
+                keywords.push(std::mem::take(&mut current).to_ascii_uppercase());
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => {
+                quote = Some(ch);
+                if !current.is_empty() {
+                    keywords.push(std::mem::take(&mut current).to_ascii_uppercase());
+                }
+            }
+            _ if ch.is_ascii_alphanumeric() || ch == '_' => current.push(ch),
+            _ => {
+                if !current.is_empty() {
+                    keywords.push(std::mem::take(&mut current).to_ascii_uppercase());
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        keywords.push(current.to_ascii_uppercase());
+    }
+    keywords
+}
+
+fn is_export_postgres_mutating_keyword(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "CREATE"
+            | "ALTER"
+            | "REFRESH"
+            | "USE"
+            | "DROP"
+            | "COPY"
+            | "INSERT"
+            | "UPDATE"
+            | "DELETE"
+            | "MERGE"
+            | "TRUNCATE"
+            | "GRANT"
+            | "REVOKE"
+            | "CALL"
+            | "SET"
+            | "RESET"
+            | "UNLOAD"
+            | "VACUUM"
+            | "OPTIMIZE"
+    )
+}
+
+fn validate_export_postgres_sql(sql: &str) -> Result<String, String> {
+    if sql.trim().is_empty() {
+        return Err("SQL must not be empty. Try: SELECT 1 AS smoke".to_string());
+    }
+    if sql.len() > MAX_DEMO_QUERY_BYTES {
+        return Err(format!(
+            "SQL text is too large for Postgres export ({} bytes max). Use a smaller read-only query.",
+            MAX_DEMO_QUERY_BYTES
+        ));
+    }
+
+    let statements = split_sql_statements(sql);
+    if statements.len() != 1 {
+        return Err(format!(
+            "Postgres export accepts one read-only result-producing SQL statement per request; received {}.",
+            statements.len()
+        ));
+    }
+
+    let statement = statements.into_iter().next().unwrap();
+    match first_keyword(&statement).as_str() {
+        "SELECT" | "WITH" | "EXPLAIN" => {}
+        keyword => {
+            return Err(format!(
+                "Postgres export accepts only read-only result-producing SQL (SELECT/WITH/EXPLAIN); got {keyword}."
+            ));
+        }
+    }
+
+    if let Some(keyword) = sql_keywords_outside_literals(&statement)
+        .iter()
+        .find(|keyword| is_export_postgres_mutating_keyword(keyword))
+    {
+        return Err(format!(
+            "Postgres export accepts only read-only result-producing SQL; rejected state-changing keyword {keyword}."
+        ));
+    }
+
+    Ok(statement)
+}
+
 fn user_facing_query_error(error: &anyhow::Error) -> String {
     let raw = error.to_string();
     if raw.contains("This feature is not implemented")
@@ -797,15 +950,7 @@ async fn execute_query(
                 )
                 .await;
 
-            let rows = if let Some(batch) = batches.first() {
-                let buf = Vec::new();
-                let mut writer = arrow::json::LineDelimitedWriter::new(buf);
-                writer.write(batch).ok();
-                writer.finish().ok();
-                String::from_utf8(writer.into_inner()).unwrap_or_default()
-            } else {
-                String::new()
-            };
+            let rows = batches_to_ndjson(&batches);
 
             Json(json!({ "status": "ok", "rows": total_rows, "data": rows }))
         }
@@ -971,15 +1116,7 @@ async fn distributed_query(
     match exec.execute(&req.sql).await {
         Ok(batches) => {
             let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-            let rows = if let Some(batch) = batches.first() {
-                let buf = Vec::new();
-                let mut writer = arrow::json::LineDelimitedWriter::new(buf);
-                writer.write(batch).ok();
-                writer.finish().ok();
-                String::from_utf8(writer.into_inner()).unwrap_or_default()
-            } else {
-                String::new()
-            };
+            let rows = batches_to_ndjson(&batches);
             Json(json!({
                 "status": "ok",
                 "partitions": n,
@@ -991,6 +1128,43 @@ async fn distributed_query(
             "status": "error",
             "message": e.to_string(),
         })),
+    }
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+    use arrow::array::{Int32Array, RecordBatch};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use std::sync::Arc;
+
+    fn batch(vals: &[i32]) -> RecordBatch {
+        let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int32, false)]));
+        RecordBatch::try_new(schema, vec![Arc::new(Int32Array::from(vals.to_vec()))]).unwrap()
+    }
+
+    #[test]
+    fn ndjson_serializes_every_batch_not_just_the_first() {
+        // Regression: a multi-batch result (e.g. partitioned aggregate output)
+        // must serialize all rows, matching the reported total — not only the
+        // first batch.
+        let batches = vec![batch(&[1, 2, 3]), batch(&[4, 5]), batch(&[6])];
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        let out = batches_to_ndjson(&batches);
+        let lines: Vec<&str> = out.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(
+            lines.len(),
+            total,
+            "expected {total} rows, got {}",
+            lines.len()
+        );
+        assert_eq!(total, 6);
+        assert!(out.contains("\"n\":6"), "last batch's row must be present");
+    }
+
+    #[test]
+    fn ndjson_empty_for_no_batches() {
+        assert_eq!(batches_to_ndjson(&[]), "");
     }
 }
 
@@ -1380,6 +1554,62 @@ mod tenant_tests {
             validate_demo_sql(sql)
                 .unwrap_or_else(|err| panic!("demo validator should accept safe SQL {sql}: {err}"));
         }
+    }
+
+    #[test]
+    fn export_postgres_sql_validator_accepts_only_read_only_result_statements() {
+        for sql in [
+            "SELECT 1 AS smoke",
+            "WITH rows AS (SELECT 1 AS smoke) SELECT * FROM rows",
+            "EXPLAIN SELECT 1 AS smoke",
+            "SELECT 'DROP TABLE is string literal' AS note",
+        ] {
+            validate_export_postgres_sql(sql).unwrap_or_else(|err| {
+                panic!("export postgres validator should accept read-only SQL {sql}: {err}")
+            });
+        }
+
+        for sql in [
+            "CREATE TABLE safe AS SELECT 1 AS smoke",
+            "ALTER WAREHOUSE default SET SIZE='small'",
+            "REFRESH MATERIALIZED VIEW mv_demo",
+            "USE WAREHOUSE analytics",
+            "DROP TABLE smoke_rollup",
+            "COPY INTO public_smoke FROM '/tmp/public_smoke.parquet'",
+            "SHOW TABLES",
+            "DESCRIBE orders_ext",
+            "SELECT 1; DROP TABLE smoke_rollup",
+        ] {
+            assert!(
+                validate_export_postgres_sql(sql).is_err(),
+                "export postgres validator should reject non-read-only SQL: {sql}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn export_postgres_rejects_demo_write_sql_before_target_connection() {
+        let router = make_router();
+        let resp = router
+            .oneshot(
+                Request::post("/api/v1/export/postgres")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"sql":"CREATE TABLE safe AS SELECT 1 AS smoke","dsn":"postgres://user:***@localhost:1/db","table":"smoke"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = body_json(resp).await;
+        assert_eq!(body["status"], "error");
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("read-only result-producing SQL")
+        );
     }
 
     #[tokio::test]

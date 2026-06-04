@@ -218,6 +218,10 @@ OPENSNOW_MAX_CONCURRENT_QUERIES=4
 
 # default: 30 seconds, hard cap: 300 seconds
 OPENSNOW_QUERY_TIMEOUT_SECS=30
+
+# bounds /api/v1/export/postgres target connect + load network I/O;
+# default: 30 seconds, hard cap: 300 seconds
+OPENSNOW_PG_EXPORT_TIMEOUT_SECS=30
 ```
 
 Kubernetes-per-warehouse worker pools, KEDA autosuspend/auto-resume, and hard resource/billing isolation remain roadmap work. Current controls are admission, state gating, timeout, metrics, and usage estimation.
@@ -851,13 +855,13 @@ The REST API remains the default client path for local/public smoke. Two operato
 ```bash
 # Register a local/object-store Parquet file or directory as a queryable table.
 curl -X POST http://localhost:8080/api/v1/tables/register \
-  -H "Authorization: Bearer <admin-token>" \
+  -H "Authorization: Bearer ***" \
   -H "content-type: application/json" \
   -d '{"name":"orders_ext","uri":"s3://my-bucket/path/to/orders/"}'
 
 # Export a validated OpenSnow query result into an external PostgreSQL table.
 curl -X POST http://localhost:8080/api/v1/export/postgres \
-  -H "Authorization: Bearer <admin-token>" \
+  -H "Authorization: Bearer ***" \
   -H "content-type: application/json" \
   -d '{"sql":"SELECT * FROM orders_ext LIMIT 1000","dsn":"postgres://user:***@postgres.example.com:5432/app","schema":"public","table":"orders_ext","mode":"replace"}'
 ```
