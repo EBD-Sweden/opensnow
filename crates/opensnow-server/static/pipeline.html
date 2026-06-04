@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenSnow — Pipeline</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: #0d1117; color: #c9d1d9; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 20px;
+           border-bottom: 1px solid #21262d; background: #161b22; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .meta { color: #8b949e; font-size: 12px; }
+  header .spacer { flex: 1; }
+  a.btn, button.btn { background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+        border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; text-decoration: none; }
+  a.btn:hover, button.btn:hover { background: #30363d; }
+  a.btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .wrap { padding: 18px 20px; }
+  .legend { display: flex; gap: 16px; margin-bottom: 12px; font-size: 12px; color: #8b949e; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .graph { position: relative; }
+  svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .cols { position: relative; display: grid; gap: 60px; z-index: 1;
+          grid-auto-flow: column; align-items: start; justify-content: start; }
+  .col h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+            color: #8b949e; margin: 0 0 12px; }
+  .node { width: 210px; margin: 0 0 22px; padding: 10px 12px; border-radius: 8px;
+          background: #161b22; border: 1px solid #30363d; border-left-width: 4px; }
+  .node .nm { font-weight: 600; font-size: 13px; word-break: break-all; }
+  .node .st { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  .node.success { border-left-color: #2ea043; }
+  .node.error   { border-left-color: #f85149; }
+  .node.not_run { border-left-color: #6e7681; }
+  .node.source  { border-left-color: #1f6feb; }
+  .empty { color: #8b949e; padding: 40px 0; }
+  code { background:#21262d; padding:1px 5px; border-radius:4px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>❄ OpenSnow — Pipeline &amp; Lineage</h1>
+  <span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <a class="btn" href="/">SQL console</a>
+  <a class="btn" id="dash" style="display:none" target="_blank" rel="noopener">Open dashboard ↗</a>
+  <button class="btn" onclick="load()">Refresh</button>
+</header>
+<div class="wrap">
+  <div class="legend">
+    <span><i class="dot" style="background:#1f6feb"></i> source</span>
+    <span><i class="dot" style="background:#2ea043"></i> success</span>
+    <span><i class="dot" style="background:#f85149"></i> error</span>
+    <span><i class="dot" style="background:#6e7681"></i> not run</span>
+  </div>
+  <div class="graph">
+    <svg class="edges" id="edges"></svg>
+    <div class="cols" id="cols"></div>
+  </div>
+  <div id="empty" class="empty" style="display:none"></div>
+</div>
+<script>
+const LAYERS = [["source","Sources"],["staging","Staging"],["mart","Marts"],["model","Models"]];
+
+async function load() {
+  let data;
+  try { data = await (await fetch("/api/v1/pipeline")).json(); }
+  catch (e) { return showEmpty("Could not load /api/v1/pipeline."); }
+
+  const meta = document.getElementById("meta");
+  meta.textContent = data.generated_at ? ("last run " + new Date(data.generated_at).toLocaleString()) : "";
+  const dash = document.getElementById("dash");
+  if (data.dashboards && data.dashboards.length) {
+    dash.style.display = ""; dash.href = data.dashboards[0].url;
+    dash.textContent = "Open dashboard: " + data.dashboards[0].name + " ↗";
+    dash.classList.add("primary");
+  }
+
+  const nodes = data.nodes || [];
+  if (!data.available || !nodes.length) {
+    return showEmpty("No dbt artifacts found in <code>" + (data.artifacts_dir || "dbt/target") +
+      "</code>. Run <code>dbt run</code>, then set <code>OPENSNOW_DBT_ARTIFACTS_DIR</code> to that target dir.");
+  }
+  document.getElementById("empty").style.display = "none";
+
+  // group by layer, render columns
+  const cols = document.getElementById("cols");
+  cols.innerHTML = "";
+  const idToName = {}; nodes.forEach(n => idToName[n.id] = n.name);
+  const elById = {};
+  for (const [layer, title] of LAYERS) {
+    const group = nodes.filter(n => n.layer === layer);
+    if (!group.length) continue;
+    const col = document.createElement("div"); col.className = "col";
+    col.innerHTML = "<h2>" + title + "</h2>";
+    for (const n of group) {
+      const d = document.createElement("div");
+      d.className = "node " + (n.status || "not_run");
+      const t = (n.execution_time != null) ? (" · " + n.execution_time.toFixed(2) + "s") : "";
+      d.innerHTML = "<div class='nm'>" + n.name + "</div><div class='st'>" + n.status + t + "</div>";
+      col.appendChild(d); elById[n.id] = d;
+    }
+    cols.appendChild(col);
+  }
+
+  // draw dependency edges after layout settles
+  requestAnimationFrame(() => drawEdges(nodes, elById));
+}
+
+function drawEdges(nodes, elById) {
+  const svg = document.getElementById("edges");
+  const graph = svg.parentElement.getBoundingClientRect();
+  svg.setAttribute("width", graph.width); svg.setAttribute("height", graph.height);
+  svg.innerHTML = "";
+  for (const n of nodes) {
+    const to = elById[n.id]; if (!to) continue;
+    for (const dep of (n.depends_on || [])) {
+      const from = elById[dep]; if (!from) continue;
+      const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+      const x1 = a.right - graph.left, y1 = a.top - graph.top + a.height/2;
+      const x2 = b.left - graph.left,  y2 = b.top - graph.top + b.height/2;
+      const mx = (x1 + x2) / 2;
+      const p = document.createElementNS("http://www.w3.org/2000/svg","path");
+      p.setAttribute("d", `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`);
+      p.setAttribute("fill","none"); p.setAttribute("stroke","#30363d"); p.setAttribute("stroke-width","1.5");
+      svg.appendChild(p);
+    }
+  }
+}
+
+function showEmpty(html){
+  document.getElementById("cols").innerHTML = "";
+  document.getElementById("edges").innerHTML = "";
+  const e = document.getElementById("empty"); e.style.display = ""; e.innerHTML = html;
+}
+
+window.addEventListener("resize", load);
+load();
+</script>
+</body>
+</html>

@@ -186,6 +186,8 @@ pub fn create_router_with_auth_and_buffer(
         .merge(admin)
         .merge(crate::admin::auth_login_router(sso_manager, auth.clone()))
         .merge(dbt)
+        // Read-only pipeline/lineage view (dbt DAG + last-run status).
+        .merge(crate::pipeline::router())
         .merge(ingest_batch_routes)
         .merge(ingest_status_routes)
         // Tenant resolution runs for every request — public and protected.

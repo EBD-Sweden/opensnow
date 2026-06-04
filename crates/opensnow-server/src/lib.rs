@@ -15,6 +15,7 @@ pub mod ingest_buffer;
 pub mod metrics;
 pub mod pg;
 pub mod pg_sink;
+pub mod pipeline;
 pub mod policy;
 pub mod rest;
 pub mod server;
