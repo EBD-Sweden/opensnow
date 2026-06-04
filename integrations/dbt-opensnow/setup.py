@@ -14,6 +14,16 @@ setup(
     url="https://github.com/opensnow/opensnow",
     packages=find_namespace_packages(include=["dbt", "dbt.*"]),
     include_package_data=True,
+    # Ship the dbt include bundle (macros + project/profile templates). Without
+    # this, a non-editable `pip install` drops the *.sql macros and the adapter
+    # cannot materialize models.
+    package_data={
+        "dbt.include.opensnow": [
+            "dbt_project.yml",
+            "profile_template.yml",
+            "macros/*.sql",
+        ],
+    },
     install_requires=[
         "dbt-core>=1.7,<2.0",
         "dbt-postgres>=1.7,<2.0",

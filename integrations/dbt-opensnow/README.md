@@ -88,6 +88,19 @@ lifts the public-demo SQL gate on the pgwire path so dbt can issue `CREATE TABLE
 AS`, `DROP TABLE`, and session-control statements. Do not enable it on public
 unauthenticated demos.
 
+## Required project macros
+
+OpenSnow's engine needs a **bare, unqualified** `CREATE TABLE AS` target and has
+**no `ALTER TABLE ... RENAME`**, so the default dbt table materialization does
+not work. dbt (>= 1.8) also does not apply an *imported package's*
+materialization/dispatch overrides by default, so the OpenSnow-specific
+materialization and `create_table_as`/`drop_relation` macros must live in **your
+dbt project's own `macros/`** directory.
+
+Copy `sample_project/macros/opensnow_project.sql` into every OpenSnow dbt
+project's `macros/` folder (one file). The `sample_project/` here is a complete,
+runnable reference.
+
 ## Supported features
 
 - Table materializations (CREATE TABLE AS)
