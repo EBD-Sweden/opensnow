@@ -8,6 +8,8 @@
 *.db
 __pycache__/
 *.egg-info/
+integrations/dbt-opensnow/build/
+integrations/dbt-opensnow/dist/
 deploy/helm/*/charts/
 deploy/terraform/.terraform/
 deploy/terraform/**/.terraform/
