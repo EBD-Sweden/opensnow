@@ -844,6 +844,26 @@ opensnow:
 
 Tableau / Looker / Metabase can use their PostgreSQL connector on port 5433 only against trusted, explicitly pgwire-enabled deployments. Do not expose pgwire as a public/default endpoint until auth, tenant, RBAC/SQL-policy, and audit boundaries are enforced on that path.
 
+### REST data movement endpoints
+
+The REST API remains the default client path for local/public smoke. Two operator data-movement endpoints are available for trusted deployments:
+
+```bash
+# Register a local/object-store Parquet file or directory as a queryable table.
+curl -X POST http://localhost:8080/api/v1/tables/register \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "content-type: application/json" \
+  -d '{"name":"orders_ext","uri":"s3://my-bucket/path/to/orders/"}'
+
+# Export a validated OpenSnow query result into an external PostgreSQL table.
+curl -X POST http://localhost:8080/api/v1/export/postgres \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "content-type: application/json" \
+  -d '{"sql":"SELECT * FROM orders_ext LIMIT 1000","dsn":"postgres://user:***@postgres.example.com:5432/app","schema":"public","table":"orders_ext","mode":"replace"}'
+```
+
+When auth is enabled these routes require the `policy.admin` scope. In auth-disabled local demo mode they are still reachable, so keep the HTTP listener bound to loopback/trusted private networks and do not expose them as public unauthenticated endpoints.
+
 ### Arrow Flight SQL (bulk transfer)
 
 ```python

@@ -296,7 +296,14 @@ Secondary high-performance endpoint for bulk extract/load. DuckDB, Polars, panda
 
 ### 7.3 REST API (Management)
 
-`axum` serving OpenAPI 3.1 management API at `/api/v1/`:
+`axum` serves management and demo-safe data-plane APIs under `/api/v1/`. The current implemented local/public surface includes health/status, SQL query, streaming ingest, tenant/admin/auth/dbt routes, plus two admin-scoped data movement routes:
+
+- `POST /api/v1/tables/register` registers a local or object-store Parquet file/directory (`/path`, `file://`, `s3://`, `gs://`, `gcs://`, `az://`, `abfs://`) under a safe unqualified table name.
+- `POST /api/v1/export/postgres` runs one validated OpenSnow `SELECT`/safe materialization query and writes the result to an external PostgreSQL table in `replace` or `append` mode.
+
+When auth is enabled, both routes require `policy.admin`; in auth-disabled local demo mode they remain a trusted-local operator path and must not be exposed as a public/default endpoint.
+
+Longer-term Snowflake-style management resources remain roadmap/API-compatibility targets:
 - `/warehouses` -- create, suspend, resume, resize
 - `/queries` -- async submit, poll, cancel
 - `/databases`, `/users`, `/roles` -- CRUD

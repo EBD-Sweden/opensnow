@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use axum::{
     Json, Router,
     extract::State,
-    http::header,
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::get,
 };
@@ -113,6 +113,18 @@ pub fn create_router_with_auth_and_buffer(
     let mut ingest_write_routes: Router = Router::new()
         .route("/api/v1/ingest", axum::routing::post(ingest))
         .route("/api/v1/demo/load", axum::routing::post(load_demo_data))
+        .with_state(handle.clone());
+    // Registering an external Parquet table (local or s3://, gs://, az://) is a
+    // privileged operation — admin scope when auth is enabled.
+    let mut table_admin_routes: Router = Router::new()
+        .route(
+            "/api/v1/tables/register",
+            axum::routing::post(register_table),
+        )
+        .route(
+            "/api/v1/export/postgres",
+            axum::routing::post(export_postgres),
+        )
         .with_state(handle);
 
     let mut router = Router::new()
@@ -152,6 +164,9 @@ pub fn create_router_with_auth_and_buffer(
         tenant_write_routes = tenant_write_routes
             .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
             .route_layer(auth_layer.clone());
+        table_admin_routes = table_admin_routes
+            .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
+            .route_layer(auth_layer.clone());
         admin = admin
             .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
             .route_layer(auth_layer.clone());
@@ -167,6 +182,7 @@ pub fn create_router_with_auth_and_buffer(
         .merge(distributed_query_routes)
         .merge(ingest_write_routes)
         .merge(tenant_write_routes)
+        .merge(table_admin_routes)
         .merge(admin)
         .merge(crate::admin::auth_login_router(sso_manager, auth.clone()))
         .merge(dbt)
@@ -236,6 +252,125 @@ async fn load_demo_data(State(handle): State<AppState>) -> Json<Value> {
             "message": format!("failed to load demo data: {e}"),
             "next_step": "Check server logs and docs/DEPLOYMENT.md, then retry Load demo data.",
         })),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RegisterTableRequest {
+    /// Unqualified, safe table name to expose the data under.
+    name: String,
+    /// Parquet location: a local path or an object-store URI
+    /// (`s3://bucket/key.parquet`, `gs://…`, `az://…`). Directories of Parquet
+    /// are also accepted by the underlying listing table.
+    uri: String,
+}
+
+/// Allow letters, digits and underscore; must start with a letter/underscore.
+fn is_safe_table_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Accept object-store URIs and ordinary local paths; reject anything that
+/// looks like a shell/scheme injection surface.
+fn is_supported_parquet_uri(uri: &str) -> bool {
+    let ok_scheme = ["s3://", "gs://", "gcs://", "az://", "abfs://", "file://"]
+        .iter()
+        .any(|s| uri.starts_with(s));
+    let looks_local = uri.starts_with('/') || uri.starts_with("./") || uri.starts_with("../");
+    (ok_scheme || looks_local) && !uri.contains('\n') && uri.len() <= 2048
+}
+
+/// Register an external Parquet file/dir (local or object-store URI) as a
+/// queryable table. This is the supported path for querying S3/GCS/Azure data
+/// directly — once registered, the table is visible to the standard
+/// (demo-safe) `SELECT` surface. Protected by the admin scope when auth is on.
+#[tracing::instrument(name = "rest.register_table", skip(handle))]
+async fn register_table(
+    State(handle): State<AppState>,
+    Json(req): Json<RegisterTableRequest>,
+) -> Response {
+    if !is_safe_table_name(&req.name) {
+        return error_json(
+            StatusCode::BAD_REQUEST,
+            "invalid table name: use letters, digits and underscores, starting with a letter",
+        );
+    }
+    if !is_supported_parquet_uri(&req.uri) {
+        return error_json(
+            StatusCode::BAD_REQUEST,
+            "unsupported uri: expected a local path or an s3://, gs://, az:// or file:// Parquet location",
+        );
+    }
+    match handle.register_parquet(&req.name, &req.uri).await {
+        Ok(()) => Json(json!({
+            "status": "ok",
+            "table": req.name,
+            "uri": req.uri,
+            "next_step": format!("SELECT * FROM {} LIMIT 10 via /api/v1/query", req.name),
+        }))
+        .into_response(),
+        Err(e) => error_json(
+            StatusCode::BAD_GATEWAY,
+            &format!("failed to register table from {}: {e}", req.uri),
+        ),
+    }
+}
+
+fn error_json(code: StatusCode, message: &str) -> Response {
+    (code, Json(json!({ "status": "error", "message": message }))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct ExportPostgresRequest {
+    /// Query to run in OpenSnow; its result set is written to Postgres.
+    sql: String,
+    /// Target Postgres DSN, e.g. `postgres://user:pass@host:5432/db`.
+    dsn: String,
+    /// Target table name (safe identifier).
+    table: String,
+    /// Target schema (defaults to `public`).
+    #[serde(default = "default_export_schema")]
+    schema: String,
+    /// `replace` (default) or `append`.
+    #[serde(default)]
+    mode: Option<String>,
+}
+
+fn default_export_schema() -> String {
+    "public".to_string()
+}
+
+/// Run a query in OpenSnow and load the result into an external Postgres table
+/// — the "serving layer" sink. Admin-scoped when auth is enabled.
+#[tracing::instrument(name = "rest.export_postgres", skip(handle, req))]
+async fn export_postgres(
+    State(handle): State<AppState>,
+    Json(req): Json<ExportPostgresRequest>,
+) -> Response {
+    let mode = match crate::pg_sink::WriteMode::parse(req.mode.as_deref().unwrap_or("replace")) {
+        Ok(m) => m,
+        Err(e) => return error_json(StatusCode::BAD_REQUEST, &e.to_string()),
+    };
+    let sql = match validate_demo_sql(&req.sql) {
+        Ok(s) => s,
+        Err(e) => return error_json(StatusCode::BAD_REQUEST, &e),
+    };
+    match crate::pg_sink::export_to_postgres(&handle, &sql, &req.dsn, &req.schema, &req.table, mode)
+        .await
+    {
+        Ok(rows) => Json(json!({
+            "status": "ok",
+            "rows_written": rows,
+            "target": format!("{}.{}", req.schema, req.table),
+        }))
+        .into_response(),
+        Err(e) => error_json(StatusCode::BAD_GATEWAY, &format!("export failed: {e}")),
     }
 }
 
@@ -1382,6 +1517,74 @@ mod tenant_tests {
         assert!(message.contains("invalid demo table identifier"));
         assert!(message.contains("../escape"));
         assert!(message.contains("docs/SQL_COMPATIBILITY.md"));
+    }
+
+    #[test]
+    fn table_register_request_validates_identifier_and_uri_surface() {
+        for name in ["orders", "orders_2026", "_tmp"] {
+            assert!(is_safe_table_name(name), "safe table name rejected: {name}");
+        }
+        for name in ["", "1orders", "public.orders", "orders;drop", "../orders"] {
+            assert!(
+                !is_safe_table_name(name),
+                "unsafe table name accepted: {name}"
+            );
+        }
+
+        for uri in [
+            "/data/orders.parquet",
+            "./demo/orders.parquet",
+            "../fixtures/orders.parquet",
+            "file:///data/orders.parquet",
+            "s3://bucket/orders/",
+            "gs://bucket/orders/",
+            "az://container/orders/",
+        ] {
+            assert!(is_supported_parquet_uri(uri), "safe URI rejected: {uri}");
+        }
+        for uri in ["", "http://example.com/orders.parquet", "s3://bucket/a\nb"] {
+            assert!(!is_supported_parquet_uri(uri), "unsafe URI accepted: {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_enabled_table_admin_routes_require_policy_admin_scope() {
+        let auth = test_auth_state();
+        let analyst = bearer(
+            &auth,
+            "analyst-client",
+            "ANALYST",
+            vec!["sql.query", "table.select"],
+        );
+        let app = make_auth_router(auth);
+
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/tables/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"name":"orders","uri":"/tmp/orders.parquet"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let non_admin = app
+            .oneshot(
+                Request::post("/api/v1/export/postgres")
+                    .header("content-type", "application/json")
+                    .header("authorization", analyst)
+                    .body(Body::from(
+                        r#"{"sql":"SELECT 1 AS smoke","dsn":"postgres://user:***@localhost/db","table":"smoke"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(non_admin.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

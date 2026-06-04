@@ -25,6 +25,7 @@ chrono.workspace = true
 rusqlite.workspace = true
 argon2 = "0.5"
 pgwire = "0.28"
+tokio-postgres = "0.7"
 async-trait = "0.1"
 futures = "0.3"
 prometheus = "0.13"
