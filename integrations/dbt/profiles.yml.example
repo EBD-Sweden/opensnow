@@ -1,0 +1,26 @@
+# OpenSnow speaks the PostgreSQL wire protocol, so dbt-postgres connects
+# directly. Drop this file at ~/.dbt/profiles.yml (or pass --profiles-dir)
+# and run `dbt debug` to verify the connection.
+#
+# Default OpenSnow ports (override via opensnow.toml):
+#   - REST API:           8080
+#   - PostgreSQL wire:    5433
+
+opensnow:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5433
+      user: opensnow
+      # OpenSnow does not require a password for local dev. For production,
+      # enable JWT (OPENSNOW_JWT_SECRET) and use a token-issuing proxy.
+      password: ""
+      dbname: opensnow
+      schema: public
+      threads: 4
+      # Disable sslmode for local dev; enable when terminating TLS at a proxy.
+      sslmode: disable
+      # OpenSnow accepts but ignores Postgres search_path; set for clarity.
+      search_path: "public"

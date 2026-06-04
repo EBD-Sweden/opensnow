@@ -1,0 +1,27 @@
+fixed:
+  type: opensnow
+
+prompts:
+  host:
+    hint: "hostname for the OpenSnow instance"
+    default: "localhost"
+  port:
+    hint: "port number (OpenSnow PG wire protocol)"
+    type: int
+    default: 5433
+  user:
+    hint: "database username"
+    default: "opensnow"
+  password:
+    hint: "database password"
+    hide_input: true
+  dbname:
+    hint: "database name"
+    default: "opensnow"
+  schema:
+    hint: "default schema"
+    default: "public"
+  threads:
+    hint: "number of threads"
+    type: int
+    default: 4

@@ -1,0 +1,28 @@
+[package]
+name = "opensnow-distributed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+opensnow-core.workspace = true
+opensnow-catalog.workspace = true
+arrow.workspace = true
+arrow-flight.workspace = true
+datafusion.workspace = true
+tonic.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+prost = "0.13"
+futures = "0.3"
+bytes = "1"
+async-trait = "0.1"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+[build-dependencies]
+tonic-build = "0.12"

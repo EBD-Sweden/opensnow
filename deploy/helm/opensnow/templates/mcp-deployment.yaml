@@ -1,0 +1,131 @@
+{{- if .Values.mcp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "opensnow.fullname" . }}-mcp
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  replicas: {{ .Values.mcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "opensnow.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.mcp.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "opensnow.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp
+    spec:
+      serviceAccountName: {{ include "opensnow.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mcp
+          image: {{ include "opensnow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["opensnow-mcp"]
+          workingDir: /etc/opensnow
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+              protocol: TCP
+          env:
+            - name: OPENSNOW_ROLE
+              value: "mcp"
+            - name: OPENSNOW_MCP_PORT
+              value: {{ .Values.mcp.port | quote }}
+            - name: OPENSNOW_COORDINATOR_SERVICE
+              value: "{{ include "opensnow.fullname" . }}-coordinator"
+            - name: OPENSNOW_COORDINATOR_GRPC_PORT
+              value: {{ .Values.coordinator.ports.grpc | quote }}
+            - name: OPENSNOW_METADATA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if and .Values.metadata.external.enabled .Values.metadata.external.existingSecret }}
+                  name: {{ .Values.metadata.external.existingSecret }}
+                  key: {{ .Values.metadata.external.secretKey }}
+                  {{- else }}
+                  name: {{ include "opensnow.fullname" . }}-metadata
+                  key: password
+                  {{- end }}
+            - name: OPENSNOW_METADATA_DSN
+              value: {{ include "opensnow.metadata.dsn" . | quote }}
+            {{- if .Values.redis.enabled }}
+            - name: OPENSNOW_REDIS_URL
+              value: "redis://{{ include "opensnow.fullname" . }}-redis-master:6379"
+            {{- end }}
+            {{- with .Values.mcp.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opensnow
+              readOnly: true
+          {{- with .Values.mcp.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.mcp.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.mcp.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "opensnow.fullname" . }}-config
+      {{- with .Values.mcp.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcp.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.mcp.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opensnow.fullname" . }}-mcp
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  type: {{ .Values.mcp.service.type }}
+  selector:
+    {{- include "opensnow.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+  ports:
+    - name: mcp
+      port: {{ .Values.mcp.service.port }}
+      targetPort: mcp
+      protocol: TCP
+{{- end }}

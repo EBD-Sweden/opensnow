@@ -1,0 +1,25 @@
+[package]
+name = "opensnow-e2e-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+opensnow-core.workspace = true
+opensnow-server.workspace = true
+opensnow-auth.workspace = true
+opensnow-mcp = { path = "../../crates/opensnow-mcp" }
+tokio.workspace = true
+axum.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tempfile = "3"
+
+# Allow tests to mutate global tracing state independently.
+[features]
+default = []

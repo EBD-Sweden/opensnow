@@ -1,0 +1,14 @@
+{
+  "provider": "aws",
+  "event_id": "evt-active-fixture",
+  "account_id": "acme",
+  "organization_id": "acme-org",
+  "external_customer_id": "aws-customer-123",
+  "product_code": "prod-opensnow",
+  "entitlement_id": "ent-aws-fixture",
+  "plan": "marketplace",
+  "state": "active",
+  "features": ["account.activate", "warehouse.activate", "sql.query"],
+  "warehouse_limit": 2,
+  "billing_owner_email": "billing@example.com"
+}

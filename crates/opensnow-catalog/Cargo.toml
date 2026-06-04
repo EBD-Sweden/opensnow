@@ -1,0 +1,18 @@
+[package]
+name = "opensnow-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+opensnow-auth = { path = "../opensnow-auth" }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,22 @@
+[package]
+name = "opensnow-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+arrow.workspace = true
+datafusion.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "datafusion_microbench"
+harness = false
+path = "benches/datafusion_microbench.rs"

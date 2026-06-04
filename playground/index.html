@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenSnow Playground - Try SQL in your browser</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent-dim: #1f6feb;
+    --danger: #f85149;
+    --snow: #b8d4f0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo svg { width: 32px; height: 32px; }
+  .logo h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .logo h1 span { color: var(--accent); }
+  .logo .subtitle {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-left: 12px;
+  }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .badge {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .main-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  .sidebar {
+    width: 280px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+  .sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .example-query {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    color: var(--snow);
+    background: var(--surface2);
+    border: 1px solid transparent;
+    transition: all 0.15s;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .example-query:hover {
+    border-color: var(--accent);
+    background: rgba(88,166,255,0.08);
+  }
+  .table-info {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .table-info code {
+    color: var(--accent2);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .table-info .row-count {
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .btn {
+    padding: 6px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn-primary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--accent); }
+  .btn kbd {
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.1);
+    font-family: inherit;
+  }
+  .status {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+  .status.success { color: var(--accent2); }
+  .status.error { color: var(--danger); }
+  .editor-container {
+    height: 220px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .results-container {
+    flex: 1;
+    overflow: auto;
+    background: var(--bg);
+  }
+  .results-header {
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .results-header .count {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .results-table-wrap {
+    overflow: auto;
+    padding: 0;
+  }
+  table.results {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  table.results th {
+    background: var(--surface2);
+    color: var(--accent);
+    font-weight: 600;
+    text-align: left;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+  }
+  table.results td {
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    white-space: nowrap;
+  }
+  table.results tr:hover td { background: rgba(88,166,255,0.04); }
+  .error-message {
+    padding: 16px;
+    color: var(--danger);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+  .welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    gap: 8px;
+  }
+  .welcome h2 { font-size: 16px; color: var(--text); font-weight: 500; }
+  .welcome p { font-size: 13px; }
+  .resize-handle {
+    height: 4px;
+    background: var(--border);
+    cursor: ns-resize;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .resize-handle:hover { background: var(--accent); }
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="16" cy="16" r="14" fill="#1f6feb" opacity="0.15"/>
+      <path d="M16 4 L20 10 L26 12 L22 18 L22 26 L16 22 L10 26 L10 18 L6 12 L12 10 Z" fill="#58a6ff" opacity="0.8"/>
+      <circle cx="16" cy="15" r="4" fill="#e6edf3"/>
+    </svg>
+    <h1>Open<span>Snow</span> Playground</h1>
+    <span class="subtitle">Try SQL in your browser</span>
+  </div>
+  <div class="header-actions">
+    <span class="badge">SQLite (WASM)</span>
+    <span class="badge" style="background:rgba(63,185,80,0.15);color:var(--accent2)">In-Browser</span>
+  </div>
+</header>
+
+<div class="main-layout">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h3>Tables</h3>
+      <div class="table-info"><code>cdrs</code> <span class="row-count">- 1000 rows</span></div>
+      <div class="table-info" style="margin-left:12px;font-size:11px;color:var(--text-dim)">id, caller, callee, call_type, duration_sec, cost, ts</div>
+      <br>
+      <div class="table-info"><code>subscribers</code> <span class="row-count">- 500 rows</span></div>
+      <div class="table-info" style="margin-left:12px;font-size:11px;color:var(--text-dim)">id, phone, name, region, plan, signup_date</div>
+      <br>
+      <div class="table-info"><code>transactions</code> <span class="row-count">- 2000 rows</span></div>
+      <div class="table-info" style="margin-left:12px;font-size:11px;color:var(--text-dim)">id, account_id, txn_type, amount, channel, ts</div>
+      <br>
+      <div class="table-info"><code>accounts</code> <span class="row-count">- 500 rows</span></div>
+      <div class="table-info" style="margin-left:12px;font-size:11px;color:var(--text-dim)">id, holder_name, account_type, balance, branch, opened_date</div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Example Queries</h3>
+      <div class="example-query" onclick="loadExample(0)">SELECT call_type, COUNT(*) as cnt FROM cdrs GROUP BY call_type</div>
+      <div class="example-query" onclick="loadExample(1)">SELECT txn_type, ROUND(SUM(amount),2) as total FROM transactions GROUP BY txn_type</div>
+      <div class="example-query" onclick="loadExample(2)">SELECT s.region, COUNT(*) as calls FROM subscribers s JOIN cdrs c ON s.phone = c.caller GROUP BY 1 ORDER BY calls DESC</div>
+      <div class="example-query" onclick="loadExample(3)">SELECT channel, COUNT(*) as cnt, ROUND(AVG(amount),2) as avg_amt FROM transactions GROUP BY channel</div>
+      <div class="example-query" onclick="loadExample(4)">SELECT plan, COUNT(*) as subs, ROUND(AVG(julianday('2026-01-01') - julianday(signup_date)),0) as avg_days FROM subscribers GROUP BY plan</div>
+      <div class="example-query" onclick="loadExample(5)">SELECT a.branch, a.account_type, COUNT(t.id) as txns, ROUND(SUM(t.amount),2) as volume FROM accounts a JOIN transactions t ON a.id = t.account_id GROUP BY 1,2 ORDER BY volume DESC LIMIT 15</div>
+      <div class="example-query" onclick="loadExample(6)">SELECT substr(ts,1,10) as day, call_type, COUNT(*) as cnt, ROUND(SUM(cost),2) as total_cost FROM cdrs GROUP BY 1,2 ORDER BY 1 LIMIT 20</div>
+    </div>
+  </aside>
+
+  <div class="content">
+    <div class="editor-toolbar">
+      <button class="btn btn-primary" onclick="runQuery()">
+        Run <kbd>Ctrl+Enter</kbd>
+      </button>
+      <button class="btn" onclick="clearEditor()">Clear</button>
+      <button class="btn" onclick="formatSQL()">Format</button>
+      <span class="status" id="status">Ready</span>
+    </div>
+    <div class="editor-container" id="editor-container"></div>
+    <div class="resize-handle" id="resize-handle"></div>
+    <div class="results-container" id="results-container">
+      <div class="welcome">
+        <h2>Welcome to OpenSnow Playground</h2>
+        <p>Write a SQL query above and press Ctrl+Enter to run it, or click an example query in the sidebar.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- sql.js from CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<!-- Monaco Editor from CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+<script>
+// ── Global state ──
+let db = null;
+let editor = null;
+
+const EXAMPLES = [
+  "SELECT call_type, COUNT(*) as cnt FROM cdrs GROUP BY call_type;",
+  "SELECT txn_type, ROUND(SUM(amount),2) as total FROM transactions GROUP BY txn_type;",
+  "SELECT s.region, COUNT(*) as calls\nFROM subscribers s\nJOIN cdrs c ON s.phone = c.caller\nGROUP BY 1\nORDER BY calls DESC;",
+  "SELECT channel, COUNT(*) as cnt, ROUND(AVG(amount),2) as avg_amt\nFROM transactions\nGROUP BY channel;",
+  "SELECT plan, COUNT(*) as subs,\n       ROUND(AVG(julianday('2026-01-01') - julianday(signup_date)),0) as avg_days\nFROM subscribers\nGROUP BY plan;",
+  "SELECT a.branch, a.account_type,\n       COUNT(t.id) as txns,\n       ROUND(SUM(t.amount),2) as volume\nFROM accounts a\nJOIN transactions t ON a.id = t.account_id\nGROUP BY 1, 2\nORDER BY volume DESC\nLIMIT 15;",
+  "SELECT substr(ts, 1, 10) as day, call_type,\n       COUNT(*) as cnt,\n       ROUND(SUM(cost), 2) as total_cost\nFROM cdrs\nGROUP BY 1, 2\nORDER BY 1\nLIMIT 20;"
+];
+
+// ── Deterministic seeded RNG ──
+function mulberry32(a) {
+  return function() {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    var t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function seedData(db) {
+  const rng = mulberry32(42);
+  const pick = arr => arr[Math.floor(rng() * arr.length)];
+  const randInt = (lo, hi) => lo + Math.floor(rng() * (hi - lo + 1));
+  const randFloat = (lo, hi) => +(lo + rng() * (hi - lo)).toFixed(2);
+  const padDate = (y, m, d) =>
+    `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const randDate = (yFrom, yTo) => {
+    const y = randInt(yFrom, yTo);
+    const m = randInt(1, 12);
+    const d = randInt(1, 28);
+    return padDate(y, m, d);
+  };
+  const randTS = (yFrom, yTo) => {
+    return randDate(yFrom, yTo) + ` ${String(randInt(0,23)).padStart(2,'0')}:${String(randInt(0,59)).padStart(2,'0')}:${String(randInt(0,59)).padStart(2,'0')}`;
+  };
+
+  // Regions & plans
+  const regions = ['Stockholm','Gothenburg','Malmo','Uppsala','Linkoping','Lulea','Umea','Orebro'];
+  const plans = ['Basic','Standard','Premium','Business','Enterprise'];
+  const callTypes = ['voice','sms','data','mms'];
+  const txnTypes = ['deposit','withdrawal','transfer','payment','refund'];
+  const channels = ['mobile_app','web','atm','branch','pos'];
+  const accountTypes = ['checking','savings','business','premium'];
+  const branches = ['Central','North','South','East','West','Airport','Mall','University'];
+  const firstNames = ['Erik','Anna','Johan','Maria','Karl','Eva','Lars','Sara','Olof','Karin','Per','Lena','Nils','Emma','Sven','Hanna','Axel','Ida','Gustaf','Elsa'];
+  const lastNames = ['Andersson','Johansson','Karlsson','Nilsson','Eriksson','Larsson','Olsson','Persson','Svensson','Gustafsson','Pettersson','Jonsson','Hansson','Bengtsson','Lindberg'];
+
+  // ── Create tables ──
+  db.run(`CREATE TABLE subscribers (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    name TEXT NOT NULL,
+    region TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    signup_date TEXT NOT NULL
+  );`);
+
+  db.run(`CREATE TABLE cdrs (
+    id INTEGER PRIMARY KEY,
+    caller TEXT NOT NULL,
+    callee TEXT NOT NULL,
+    call_type TEXT NOT NULL,
+    duration_sec INTEGER NOT NULL,
+    cost REAL NOT NULL,
+    ts TEXT NOT NULL
+  );`);
+
+  db.run(`CREATE TABLE accounts (
+    id INTEGER PRIMARY KEY,
+    holder_name TEXT NOT NULL,
+    account_type TEXT NOT NULL,
+    balance REAL NOT NULL,
+    branch TEXT NOT NULL,
+    opened_date TEXT NOT NULL
+  );`);
+
+  db.run(`CREATE TABLE transactions (
+    id INTEGER PRIMARY KEY,
+    account_id INTEGER NOT NULL,
+    txn_type TEXT NOT NULL,
+    amount REAL NOT NULL,
+    channel TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    FOREIGN KEY(account_id) REFERENCES accounts(id)
+  );`);
+
+  // ── Seed subscribers (500) ──
+  const phones = [];
+  db.run("BEGIN TRANSACTION;");
+  const subStmt = db.prepare("INSERT INTO subscribers VALUES (?,?,?,?,?,?)");
+  for (let i = 1; i <= 500; i++) {
+    const phone = `+467${String(randInt(10000000,99999999))}`;
+    phones.push(phone);
+    const name = pick(firstNames) + ' ' + pick(lastNames);
+    subStmt.run([i, phone, name, pick(regions), pick(plans), randDate(2020, 2025)]);
+  }
+  subStmt.free();
+
+  // ── Seed CDRs (1000) ──
+  const cdrStmt = db.prepare("INSERT INTO cdrs VALUES (?,?,?,?,?,?,?)");
+  for (let i = 1; i <= 1000; i++) {
+    const caller = pick(phones);
+    let callee = pick(phones);
+    while (callee === caller) callee = pick(phones);
+    const ct = pick(callTypes);
+    const dur = ct === 'sms' || ct === 'mms' ? 0 : randInt(5, 3600);
+    const cost = ct === 'data' ? randFloat(0.5, 25) : ct === 'voice' ? randFloat(0.1, 5) : randFloat(0.05, 1.5);
+    cdrStmt.run([i, caller, callee, ct, dur, cost, randTS(2025, 2026)]);
+  }
+  cdrStmt.free();
+
+  // ── Seed accounts (500) ──
+  const accStmt = db.prepare("INSERT INTO accounts VALUES (?,?,?,?,?,?)");
+  for (let i = 1; i <= 500; i++) {
+    const name = pick(firstNames) + ' ' + pick(lastNames);
+    accStmt.run([i, name, pick(accountTypes), randFloat(100, 250000), pick(branches), randDate(2015, 2025)]);
+  }
+  accStmt.free();
+
+  // ── Seed transactions (2000) ──
+  const txStmt = db.prepare("INSERT INTO transactions VALUES (?,?,?,?,?,?)");
+  for (let i = 1; i <= 2000; i++) {
+    const accId = randInt(1, 500);
+    const tt = pick(txnTypes);
+    const amt = tt === 'deposit' || tt === 'transfer' ? randFloat(50, 50000) : randFloat(5, 10000);
+    txStmt.run([i, accId, tt, amt, pick(channels), randTS(2025, 2026)]);
+  }
+  txStmt.free();
+  db.run("COMMIT;");
+}
+
+// ── Initialize everything ──
+async function init() {
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = 'Loading SQLite WASM...';
+  statusEl.className = 'status';
+
+  try {
+    const SQL = await initSqlJs({
+      locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${file}`
+    });
+    db = new SQL.Database();
+    statusEl.textContent = 'Seeding sample data...';
+    seedData(db);
+    statusEl.textContent = 'Ready - 4 tables loaded';
+    statusEl.className = 'status success';
+  } catch (e) {
+    statusEl.textContent = 'Failed to load SQLite: ' + e.message;
+    statusEl.className = 'status error';
+    console.error(e);
+  }
+
+  // Monaco Editor
+  require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+  require(['vs/editor/editor.main'], function () {
+    monaco.editor.defineTheme('opensnow', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [
+        { token: 'keyword', foreground: '58a6ff', fontStyle: 'bold' },
+        { token: 'string', foreground: '3fb950' },
+        { token: 'number', foreground: 'd2a8ff' },
+        { token: 'comment', foreground: '8b949e' },
+      ],
+      colors: {
+        'editor.background': '#0d1117',
+        'editor.lineHighlightBackground': '#161b2280',
+        'editorCursor.foreground': '#58a6ff',
+        'editor.selectionBackground': '#1f6feb40',
+      }
+    });
+    editor = monaco.editor.create(document.getElementById('editor-container'), {
+      value: '-- Write your SQL here and press Ctrl+Enter to run\nSELECT call_type, COUNT(*) as cnt FROM cdrs GROUP BY call_type;\n',
+      language: 'sql',
+      theme: 'opensnow',
+      fontSize: 14,
+      fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+      minimap: { enabled: false },
+      lineNumbers: 'on',
+      scrollBeyondLastLine: false,
+      automaticLayout: true,
+      padding: { top: 10 },
+      suggestOnTriggerCharacters: true,
+      wordWrap: 'on',
+    });
+
+    // Ctrl+Enter / Cmd+Enter to run
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, runQuery);
+  });
+}
+
+// ── Run query ──
+function runQuery() {
+  if (!db || !editor) return;
+  const sql = editor.getValue().trim();
+  if (!sql) return;
+
+  const statusEl = document.getElementById('status');
+  const resultsEl = document.getElementById('results-container');
+  const t0 = performance.now();
+
+  try {
+    const results = db.exec(sql);
+    const elapsed = ((performance.now() - t0)).toFixed(1);
+
+    if (results.length === 0) {
+      resultsEl.innerHTML = `
+        <div class="results-header">Query executed successfully in ${elapsed}ms - no rows returned</div>
+        <div class="welcome"><p>Statement executed. No result rows.</p></div>`;
+      statusEl.textContent = `OK (${elapsed}ms)`;
+      statusEl.className = 'status success';
+      return;
+    }
+
+    // Take first result set
+    const res = results[results.length - 1];
+    const rowCount = res.values.length;
+
+    let html = `<div class="results-header">
+      <span class="count">${rowCount}</span> row${rowCount !== 1 ? 's' : ''} returned in ${elapsed}ms
+    </div>
+    <div class="results-table-wrap"><table class="results"><thead><tr>`;
+    for (const col of res.columns) {
+      html += `<th>${escHTML(col)}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+    for (const row of res.values) {
+      html += '<tr>';
+      for (const val of row) {
+        html += `<td>${val === null ? '<span style="color:var(--text-dim)">NULL</span>' : escHTML(String(val))}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    resultsEl.innerHTML = html;
+
+    statusEl.textContent = `${rowCount} row${rowCount !== 1 ? 's' : ''} (${elapsed}ms)`;
+    statusEl.className = 'status success';
+  } catch (e) {
+    const elapsed = ((performance.now() - t0)).toFixed(1);
+    resultsEl.innerHTML = `<div class="results-header" style="color:var(--danger)">Error (${elapsed}ms)</div>
+      <div class="error-message">${escHTML(e.message)}</div>`;
+    statusEl.textContent = 'Error';
+    statusEl.className = 'status error';
+  }
+}
+
+function escHTML(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function loadExample(i) {
+  if (editor) {
+    editor.setValue(EXAMPLES[i]);
+    editor.focus();
+    // Auto-run
+    setTimeout(runQuery, 100);
+  }
+}
+
+function clearEditor() {
+  if (editor) { editor.setValue(''); editor.focus(); }
+}
+
+function formatSQL() {
+  if (!editor) return;
+  // Simple formatting: uppercase keywords
+  const keywords = ['SELECT','FROM','WHERE','JOIN','LEFT','RIGHT','INNER','OUTER','CROSS','ON','AND','OR','NOT','IN','AS','GROUP','BY','ORDER','HAVING','LIMIT','OFFSET','UNION','ALL','INSERT','INTO','VALUES','UPDATE','SET','DELETE','CREATE','TABLE','DROP','ALTER','INDEX','DISTINCT','BETWEEN','LIKE','IS','NULL','CASE','WHEN','THEN','ELSE','END','COUNT','SUM','AVG','MIN','MAX','ROUND','SUBSTR','EXISTS','PRIMARY','KEY','FOREIGN','REFERENCES','BEGIN','COMMIT','ROLLBACK','DESC','ASC'];
+  let sql = editor.getValue();
+  for (const kw of keywords) {
+    const re = new RegExp('\\b' + kw + '\\b', 'gi');
+    sql = sql.replace(re, kw);
+  }
+  editor.setValue(sql);
+}
+
+// ── Resizable editor ──
+(function() {
+  const handle = document.getElementById('resize-handle');
+  const container = document.getElementById('editor-container');
+  let startY, startH;
+  handle.addEventListener('mousedown', e => {
+    startY = e.clientY;
+    startH = container.offsetHeight;
+    const onMove = e2 => {
+      const newH = Math.max(80, Math.min(600, startH + (e2.clientY - startY)));
+      container.style.height = newH + 'px';
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
+
+// ── Boot ──
+init();
+</script>
+</body>
+</html>

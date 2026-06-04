@@ -1,0 +1,95 @@
+# OpenSnow GCP BYOC / GCP Marketplace enterprise example.
+# Fill every placeholder from the customer-owned GCP project before rendering.
+enterprise:
+  # Enterprise SSO release gate: this GCP/BYOC example is OIDC-only.
+  # Embedded native SAML has no metadata/ACS/assertion validation path yet;
+  # SAML login must fail closed with saml_unsupported_fail_closed until a
+  # brokered/direct SAML profile is implemented and tested.
+  mode: "gcp-marketplace"
+  requireExternalSecrets: true
+  customerOwnedInfrastructure: true
+  accountIdentity:
+    accountId: "acct_acme"
+    organizationId: "org_acme"
+    workspaceId: "prod"
+  marketplace:
+    enabled: true
+    provider: "gcp"
+    productCode: "gcp-marketplace-product-code"
+    customerIdentifier: "gcp-customer-identifier"
+    entitlementId: "gcp-entitlement-id"
+  entitlements:
+    required: true
+    activationFeature: "account.activate"
+    warehouseFeature: "warehouse.activate"
+    warehouseLimit: 8
+  oidc:
+    enabled: true
+    issuer: "https://idp.acme.example/"
+    clientId: "opensnow"
+    existingSecret: "opensnow-oidc"
+    clientSecretKey: client-secret
+  jwt:
+    mode: "enterprise"
+    issuer: "https://opensnow.acme.example/auth"
+    audience: "opensnow-api"
+    algorithm: "RS256"
+    kid: "opensnow-prod-2026-05"
+    existingSecret: "opensnow-product-jwt"
+    privateKeyKey: private-key.pem
+    publicKeyKey: public-key.pem
+    jwkNKey: jwk-n
+    jwkEKey: jwk-e
+    verificationKeysJsonKey: verification-keys.json
+    revokedKids: ""
+  scim:
+    enabled: true
+    baseUrl: "https://opensnow.acme.example/scim/v2"
+    tokenExistingSecret: "opensnow-scim"
+    tokenSecretKey: scim-token
+  auditExport:
+    enabled: true
+    bucket: "acme-opensnow-audit"
+    prefix: "opensnow/audit/"
+    kmsKeyArn: "projects/acme-prod/locations/global/keyRings/opensnow/cryptoKeys/audit"
+  sealedSecrets:
+    enabled: true
+    provider: "gcp-secret-manager"
+    kmsKeyArn: "projects/acme-prod/locations/global/keyRings/opensnow/cryptoKeys/secrets"
+  tls:
+    enabled: true
+    existingSecret: "opensnow-tls"
+
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: "opensnow-runtime@acme-prod.iam.gserviceaccount.com"
+
+coordinator:
+  pgwireEnabled: false
+
+gateway:
+  type: LoadBalancer
+  annotations:
+    cloud.google.com/load-balancer-type: "External"
+  loadBalancerSourceRanges:
+    - "203.0.113.0/24"
+
+metadata:
+  external:
+    enabled: true
+    host: "10.10.0.4"
+    port: 5432
+    database: opensnow
+    username: opensnow
+    existingSecret: "opensnow-cloudsql"
+    secretKey: password
+  builtin:
+    enabled: false
+
+config:
+  storage:
+    type: "gcs"
+    bucket: "acme-opensnow-warehouse"
+    gcs_project_id: "acme-prod"
+    allowInsecureHttp: false
+    existingSecret: "" # empty when using GKE Workload Identity

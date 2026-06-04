@@ -1,0 +1,25 @@
+OpenSnow
+Copyright 2026 EBD Sweden
+
+This product includes software developed at EBD Sweden.
+
+Licensed under the Apache License, Version 2.0 (the "License"); see the
+LICENSE file in this repository for the full terms.
+
+------------------------------------------------------------------------
+Third-party software
+------------------------------------------------------------------------
+
+OpenSnow builds on the Rust crate ecosystem, including Apache DataFusion,
+Apache Arrow, Apache Parquet, Apache Iceberg, Tokio, Axum, and others.
+Each dependency is distributed under its own license; the resolved set is
+recorded in Cargo.lock. To generate a complete third-party attribution
+report, run:
+
+    cargo install cargo-about
+    cargo about generate about.hbs > THIRD-PARTY-LICENSES.html
+
+"Snowflake" is a trademark of Snowflake Inc. OpenSnow is an independent
+open-source project and is not affiliated with, endorsed by, or sponsored
+by Snowflake Inc. References to Snowflake describe interoperability and
+comparison only.

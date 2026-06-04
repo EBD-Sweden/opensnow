@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+*.swp
+*.swo
+.DS_Store
+.env
+.opensnow/
+*.db
+__pycache__/
+deploy/helm/*/charts/
+deploy/terraform/.terraform/
+deploy/terraform/**/.terraform/
+.venv-test/

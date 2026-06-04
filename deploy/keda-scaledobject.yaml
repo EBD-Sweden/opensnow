@@ -1,0 +1,93 @@
+## KEDA ScaledObject for OpenSnow workers
+##
+## Combines demand-based scaling (Prometheus) with a warm-pool floor
+## (idleReplicaCount=2) so that when all triggers go quiet the cluster
+## still keeps 2 pre-warmed pods ready.  The first query after an idle
+## period is served from a warm pod (~200ms) rather than a cold-start
+## pod (~3-8s).
+##
+## Supporting resources (TriggerAuthentication, redis-secret) live in
+## keda-warm-pool.yaml — apply that file first.
+##
+## Prerequisites:
+##   kubectl apply -f deploy/keda-warm-pool.yaml -n <namespace>
+##   kubectl apply -f deploy/keda-scaledobject.yaml -n <namespace>
+##
+## Only ONE ScaledObject may target a given resource; keda-warm-pool.yaml
+## intentionally contains NO ScaledObject — it only holds the auth
+## resources referenced by the Redis trigger below.
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: opensnow-worker
+  labels:
+    app.kubernetes.io/name: opensnow
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/managed-by: keda
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: opensnow-worker  # Adjust to match your Helm release: <release>-worker
+  pollingInterval: 15        # Check every 15 seconds
+  cooldownPeriod: 300        # Wait 5 min before scaling down from active state
+  # Warm-pool floor: when all triggers return 0 (idle), stay at 2 pods.
+  # Warm pods have already passed the readiness probe (engine_warmup_check),
+  # so the coordinator can promote one immediately without a cold-start delay.
+  idleReplicaCount: 2        # pods kept warm when idle — never cold-starts on first query
+  minReplicaCount: 2         # floor during active scaling
+  maxReplicaCount: 20        # ceiling
+  fallback:
+    failureThreshold: 3
+    replicas: 2              # safe fallback if metrics become unavailable
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 60
+  triggers:
+    ## Primary trigger: pending queries reported by the coordinator.
+    ## Scales up when queries are waiting; each worker handles ~10 concurrent.
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+        metricName: opensnow_warehouse_pending_queries
+        query: |
+          sum(opensnow_warehouse_pending_queries{namespace="default"})
+        threshold: "10"
+        activationThreshold: "1"
+
+    ## Secondary trigger: CPU utilisation on running workers.
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus-server.monitoring.svc.cluster.local:9090
+        metricName: opensnow_worker_cpu_utilization
+        query: |
+          avg(rate(container_cpu_usage_seconds_total{namespace="default", pod=~"opensnow-worker-.*"}[2m]))
+        threshold: "0.7"
+        activationThreshold: "0"
+
+    ## Warm-pool trigger: Redis job queue depth.
+    ## When a job lands in the queue the Redis trigger activates; KEDA
+    ## scales up from the warm floor (idleReplicaCount=2) without
+    ## waiting for the Prometheus scrape interval.
+    - type: redis
+      metadata:
+        address: redis-service.opensnow.svc.cluster.local:6379
+        listName: opensnow:queue:default
+        listLength: "1"       # 1 queued job → at least 1 extra worker
+        # enableTLS: "false"
+      authenticationRef:
+        name: redis-trigger-auth   # defined in keda-warm-pool.yaml

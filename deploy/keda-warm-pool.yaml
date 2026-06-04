@@ -1,0 +1,63 @@
+## KEDA warm-pool supporting resources
+##
+## This file does NOT contain a ScaledObject.  KEDA enforces a one-ScaledObject-
+## per-target constraint; a second ScaledObject on the same StatefulSet is
+## rejected.  The warm-pool behaviour is implemented inside the single
+## ScaledObject in keda-scaledobject.yaml via:
+##
+##   idleReplicaCount: 2   ← keeps 2 warm pods when all triggers return 0
+##   minReplicaCount:  2   ← floor during active scaling
+##
+## This file supplies the TriggerAuthentication and Secret that the Redis
+## trigger in keda-scaledobject.yaml references.
+##
+## Warm-pool lifecycle
+## ───────────────────
+##   1. Idle (queue empty, 0 pending Prometheus queries)
+##      → KEDA holds replica count at idleReplicaCount=2
+##      → Both pods pass readiness probe (engine_warmup_check in readiness.rs)
+##      → Coordinator has 2 pre-warmed workers available
+##
+##   2. Job arrives (Redis LPUSH to opensnow:queue:default)
+##      → Redis trigger activates immediately (< 15s pollingInterval)
+##      → KEDA scales up from the warm floor — no cold-start for first job
+##      → Prometheus trigger handles sustained load growth
+##
+##   3. Load drains
+##      → cooldownPeriod=300s before scale-down
+##      → Replica count returns to idleReplicaCount=2 (not 0)
+##
+## Apply order:
+##   kubectl apply -f deploy/keda-warm-pool.yaml -n opensnow
+##   kubectl apply -f deploy/keda-scaledobject.yaml -n opensnow
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis-trigger-auth
+  namespace: opensnow
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: redis-secret
+      key: redis-password
+---
+## Redis password secret.
+## For production: use an external secret manager (Vault, AWS Secrets Manager)
+## or sealed-secrets rather than storing the password in plain YAML.
+##
+## Quick setup (empty password, in-cluster Redis with no auth):
+##   kubectl create secret generic redis-secret \
+##     --from-literal=redis-password='' -n opensnow
+##
+## With a password:
+##   kubectl create secret generic redis-secret \
+##     --from-literal=redis-password='<your-password>' -n opensnow
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-secret
+  namespace: opensnow
+type: Opaque
+stringData:
+  redis-password: ""

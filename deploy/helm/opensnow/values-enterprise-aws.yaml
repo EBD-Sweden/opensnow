@@ -1,0 +1,98 @@
+# OpenSnow AWS BYOC / AWS Marketplace enterprise example.
+# Fill every placeholder from the customer-owned AWS account before rendering.
+enterprise:
+  # Enterprise SSO release gate: this AWS/BYOC example is OIDC-only.
+  # Embedded native SAML has no metadata/ACS/assertion validation path yet;
+  # SAML login must fail closed with saml_unsupported_fail_closed until a
+  # brokered/direct SAML profile is implemented and tested.
+  mode: "aws-marketplace"
+  requireExternalSecrets: true
+  customerOwnedInfrastructure: true
+  accountIdentity:
+    accountId: "acct_acme"
+    organizationId: "org_acme"
+    workspaceId: "prod"
+  marketplace:
+    enabled: true
+    provider: "aws"
+    productCode: "aws-marketplace-product-code"
+    customerIdentifier: "aws-customer-identifier"
+    entitlementId: "aws-entitlement-id"
+  entitlements:
+    required: true
+    activationFeature: "account.activate"
+    warehouseFeature: "warehouse.activate"
+    warehouseLimit: 8
+  oidc:
+    enabled: true
+    issuer: "https://idp.acme.example/"
+    clientId: "opensnow"
+    existingSecret: "opensnow-oidc"
+    clientSecretKey: client-secret
+  jwt:
+    mode: "enterprise"
+    issuer: "https://opensnow.acme.example/auth"
+    audience: "opensnow-api"
+    algorithm: "RS256"
+    kid: "opensnow-prod-2026-05"
+    existingSecret: "opensnow-product-jwt"
+    privateKeyKey: private-key.pem
+    publicKeyKey: public-key.pem
+    jwkNKey: jwk-n
+    jwkEKey: jwk-e
+    verificationKeysJsonKey: verification-keys.json
+    revokedKids: ""
+  scim:
+    enabled: true
+    baseUrl: "https://opensnow.acme.example/scim/v2"
+    tokenExistingSecret: "opensnow-scim"
+    tokenSecretKey: scim-token
+  auditExport:
+    enabled: true
+    bucket: "acme-opensnow-audit"
+    prefix: "opensnow/audit/"
+    kmsKeyArn: "arn:aws:kms:us-east-1:111122223333:key/audit-key"
+  sealedSecrets:
+    enabled: true
+    provider: "aws-secrets-manager"
+    kmsKeyArn: "arn:aws:kms:us-east-1:111122223333:key/secrets-key"
+  tls:
+    enabled: true
+    existingSecret: "opensnow-tls"
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::111122223333:role/acme-opensnow-irsa"
+
+coordinator:
+  pgwireEnabled: false
+
+gateway:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-east-1:111122223333:certificate/example"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "8080"
+  loadBalancerSourceRanges:
+    - "203.0.113.0/24"
+
+metadata:
+  external:
+    enabled: true
+    host: "acme-opensnow-metadata.abcdefghijkl.us-east-1.rds.amazonaws.com"
+    port: 5432
+    database: opensnow
+    username: opensnow
+    existingSecret: "opensnow-rds"
+    secretKey: password
+  builtin:
+    enabled: false
+
+config:
+  storage:
+    type: "s3"
+    bucket: "acme-opensnow-warehouse"
+    region: "us-east-1"
+    allowInsecureHttp: false
+    existingSecret: "" # empty when using IRSA/workload identity

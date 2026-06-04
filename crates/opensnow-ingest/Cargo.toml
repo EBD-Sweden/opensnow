@@ -1,0 +1,26 @@
+[package]
+name = "opensnow-ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+kafka = ["dep:rdkafka"]
+
+[dependencies]
+arrow.workspace = true
+parquet.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+# File watching
+notify = "7"
+
+# Kafka (feature-gated)
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>OpenSnow SSO Login</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
+    input { width: 100%; padding: 8px; margin: 8px 0; box-sizing: border-box; border: 1px solid #ddd; border-radius: 4px; }
+    button { width: 100%; padding: 10px; background: #0066cc; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #0052a3; }
+    .sso-btn { background: #333; margin-top: 8px; }
+    .divider { text-align: center; margin: 16px 0; color: #666; }
+    h1 { font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>🏔️ OpenSnow</h1>
+  <form id="loginForm">
+    <input type="email" id="email" placeholder="Email" required />
+    <input type="password" id="password" placeholder="Password" required />
+    <button type="submit">Sign In</button>
+  </form>
+  <div class="divider">or</div>
+  <button class="sso-btn" onclick="ssoLogin()">Sign In with SSO</button>
+
+  <script>
+    async function ssoLogin() {
+      const email = document.getElementById('email').value;
+      if (!email) { alert('Enter your email first'); return; }
+      const res = await fetch('/api/v1/auth/sso/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (data.redirect_url) window.location.href = data.redirect_url;
+      else alert(data.message || 'SSO not configured for this domain');
+    }
+  </script>
+</body>
+</html>

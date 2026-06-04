@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: telecom
+    description: "Raw telecom data ingested into OpenSnow"
+    schema: public
+    tables:
+      - name: raw_cdrs
+        description: "Raw call detail records (CDRs)"
+        columns:
+          - name: call_id
+            description: "Unique identifier for each call"
+            tests:
+              - not_null
+              - unique
+          - name: caller_number
+            description: "Phone number of the caller"
+          - name: callee_number
+            description: "Phone number of the callee"
+          - name: call_start
+            description: "Timestamp when the call started"
+          - name: call_end
+            description: "Timestamp when the call ended"
+          - name: duration_seconds
+            description: "Call duration in seconds"
+          - name: call_type
+            description: "Type of call (voice, sms, data)"
+          - name: cell_tower_id
+            description: "ID of the cell tower handling the call"
+          - name: status
+            description: "Call outcome (completed, failed, dropped)"

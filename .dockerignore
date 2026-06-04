@@ -1,0 +1,37 @@
+# Build artifacts (14GB+)
+target/
+
+# Version control
+.git/
+.gitignore
+
+# Agent / IDE / editor state
+.hermes/
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local state / secrets
+.env
+.env.*
+.opensnow/
+.opensnow-demo/
+.openclaw/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pid
+*.pem
+*.key
+
+# Helm subchart archives (fetched at deploy time)
+deploy/helm/*/charts/
+deploy/helm/*/*.lock
+
+# Logs / temp
+logs/
+tmp/

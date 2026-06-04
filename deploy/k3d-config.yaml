@@ -1,0 +1,53 @@
+## k3d cluster configuration for OpenSnow local development
+## Usage: k3d cluster create --config deploy/k3d-config.yaml
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: opensnow-dev
+servers: 1
+agents: 2
+kubeAPI:
+  hostIP: "127.0.0.1"
+  hostPort: "6443"
+ports:
+  # Map gateway HTTP port to localhost
+  - port: 8080:30080
+    nodeFilters:
+      - loadbalancer
+  # Map gateway Postgres-wire port to localhost
+  - port: 5433:30543
+    nodeFilters:
+      - loadbalancer
+  # Map MinIO console (optional)
+  - port: 9001:30901
+    nodeFilters:
+      - loadbalancer
+volumes:
+  # Persistent local-path storage
+  - volume: opensnow-data:/var/lib/rancher/k3s/storage
+    nodeFilters:
+      - all
+options:
+  k3d:
+    wait: true
+    timeout: "120s"
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --disable=metrics-server
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: opensnow.io/role=dev
+        nodeFilters:
+          - agent:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
+registries:
+  create:
+    name: opensnow-registry
+    host: "0.0.0.0"
+    hostPort: "5111"

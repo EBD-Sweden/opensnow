@@ -1,0 +1,46 @@
+name: Terraform Validate
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "deploy/terraform/**"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "deploy/terraform/**"
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.provider }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: aws
+            dir: deploy/terraform
+          - provider: gcp
+            dir: deploy/terraform/gcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.7"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive ${{ matrix.dir }}/
+
+      - name: Terraform Init
+        run: terraform -chdir=${{ matrix.dir }} init -backend=false
+
+      - name: Terraform Validate
+        run: terraform -chdir=${{ matrix.dir }} validate

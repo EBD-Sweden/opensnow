@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenSnow — External Tester Demo</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+  --text: #e6edf3; --text2: #8b949e; --accent: #58a6ff; --button-blue: #1f6feb; --button-green: #238636; --green: #3fb950;
+  --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+}
+html, body { min-height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: radial-gradient(circle at top left, rgba(88,166,255,0.12), transparent 36%), var(--bg);
+  color: var(--text);
+}
+a { color: var(--accent); }
+.header {
+  background: rgba(22, 27, 34, 0.94);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 22px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  backdrop-filter: blur(10px);
+}
+.brand { font-size: 22px; font-weight: 800; color: var(--accent); letter-spacing: -0.02em; }
+.tagline { color: var(--text2); font-size: 13px; }
+.status-pill {
+  margin-left: auto;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text2);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--yellow); box-shadow: 0 0 14px currentColor; }
+.status-pill.ok { color: var(--green); }
+.status-pill.err { color: var(--red); }
+.status-pill.ok .dot { background: var(--green); }
+.status-pill.err .dot { background: var(--red); }
+.page { max-width: 1280px; margin: 0 auto; padding: 22px; display: grid; gap: 16px; }
+.hero, .panel {
+  background: rgba(22, 27, 34, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.18);
+}
+.hero { padding: 22px; display: grid; gap: 18px; }
+.hero h1 { font-size: 27px; letter-spacing: -0.03em; }
+.hero p { color: var(--text2); line-height: 1.55; max-width: 850px; }
+.steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.step { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-height: 118px; }
+.step strong { display: block; color: var(--text); margin-bottom: 7px; }
+.step span { color: var(--text2); font-size: 13px; line-height: 1.45; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr); gap: 16px; }
+.panel { padding: 16px; }
+.panel h2 { font-size: 16px; margin-bottom: 10px; }
+.controls { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-bottom: 12px; }
+button, select {
+  padding: 9px 13px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
+  font-size: 13px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--button-blue); color: #fff; border-color: var(--button-blue); font-weight: 700; }
+button.success { background: var(--button-green); color: #fff; border-color: var(--button-green); font-weight: 700; }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+select { min-width: 280px; }
+textarea#sql {
+  width: 100%;
+  min-height: 190px;
+  background: #080c12;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 13px;
+  font-family: 'SF Mono', 'Fira Code', 'Menlo', Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.55;
+  resize: vertical;
+}
+textarea#sql:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(88,166,255,0.13); }
+.status-bar { margin-top: 10px; font-size: 12px; color: var(--text2); min-height: 18px; }
+.ok { color: var(--green); } .err { color: var(--red); } .warn { color: var(--yellow); }
+.results-wrap { margin-top: 12px; min-height: 250px; max-height: 520px; background: #080c12; border: 1px solid var(--border); border-radius: 9px; overflow: auto; }
+.empty { padding: 34px; text-align: center; color: var(--text2); }
+.empty h3 { color: var(--text); margin-bottom: 7px; }
+.error { padding: 16px; color: var(--red); font-family: 'SF Mono', monospace; font-size: 13px; white-space: pre-wrap; }
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; font-family: 'SF Mono', monospace; }
+table.data th { background: var(--bg3); position: sticky; top: 0; padding: 8px 12px; text-align: left; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.data td { padding: 7px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.data tr:hover td { background: rgba(33,38,45,0.65); }
+.command { margin: 10px 0; background: #080c12; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.command-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; color: var(--text2); font-size: 12px; border-bottom: 1px solid var(--border); }
+.command pre { padding: 11px; overflow-x: auto; color: var(--text); font-size: 12px; line-height: 1.45; }
+.help-list { display: grid; gap: 8px; color: var(--text2); font-size: 13px; line-height: 1.45; }
+.badge { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 8px; color: var(--text2); font-size: 12px; }
+@media (max-width: 900px) { .grid, .steps { grid-template-columns: 1fr; } .header { align-items: flex-start; flex-direction: column; } .status-pill { margin-left: 0; } }
+</style>
+</head>
+<body>
+<header class="header">
+  <div class="brand">OpenSnow</div>
+  <div class="tagline">External tester browser demo</div>
+  <div class="status-pill" id="connection-pill"><span class="dot"></span><span id="connection-text">Connection status: checking…</span></div>
+</header>
+
+<main class="page">
+  <section class="hero" aria-labelledby="start-title">
+    <div>
+      <span class="badge">Start here</span>
+      <h1 id="start-title">Run your first OpenSnow query in under a minute.</h1>
+      <p>This page is the first-run path for external testers. It checks the server, loads safe demo data, offers sample SQL, and shows copyable psql/pgwire/API commands so you can test without hand-holding. Hosted evaluation sandbox accounts are tracked and limited by OpenSnow; enterprise BYOC accounts are a separate production deployment path.</p>
+    </div>
+    <div class="steps">
+      <div class="step"><strong>1. Connection status</strong><span>Health and API status are checked automatically. Red means the server or route is not reachable.</span></div>
+      <div class="step"><strong>2. Load demo data</strong><span>Click Load demo data to create <code>opensnow_demo_orders</code> with six sample rows.</span></div>
+      <div class="step"><strong>3. Pick a sample query</strong><span>Use the sample-query picker or write SQL directly, then press Run or Ctrl+Enter.</span></div>
+      <div class="step"><strong>4. Go deeper</strong><span>Copy commands or open <a href="/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a> and <a href="/docs/SQL_COMPATIBILITY.md">SQL compatibility</a>.</span></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Query console</h2>
+      <div class="controls">
+        <button class="success" id="load-demo-btn" type="button">Load demo data</button>
+        <select id="sample-query" aria-label="Sample query">
+          <option value="SHOW TABLES">Show tables</option>
+          <option value="SELECT region, SUM(amount) AS revenue FROM opensnow_demo_orders GROUP BY region ORDER BY revenue DESC">Demo revenue by region</option>
+          <option value="SELECT plan, COUNT(*) AS orders, AVG(amount) AS avg_amount FROM opensnow_demo_orders GROUP BY plan ORDER BY orders DESC">Demo plan mix</option>
+          <option value="SELECT * FROM opensnow_demo_orders ORDER BY order_id LIMIT 20">Preview demo orders</option>
+          <option value="SELECT 1 AS smoke;">Smoke test SELECT</option>
+        </select>
+        <button class="primary" id="run-btn" type="button">Run query</button>
+        <button id="clear-btn" type="button">Clear</button>
+        <span class="badge">Ctrl+Enter to run</span>
+      </div>
+      <label for="sql">SQL editor</label>
+      <textarea id="sql" spellcheck="false" autocomplete="off">SHOW TABLES</textarea>
+      <div class="status-bar" id="status-bar">Run a query to see results.</div>
+      <div class="results-wrap" id="results">
+        <div class="empty"><h3>No results yet</h3><p>Load demo data, choose a sample query, then press Run query.</p></div>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <h2>Copyable commands</h2>
+      <div class="command">
+        <div class="command-header"><span>pgwire / psql (trusted local only)</span><button type="button" data-copy="psql -h localhost -p 5433">Copy psql</button></div>
+        <pre>pgwire is disabled by default for public demos.
+Enable only for trusted local smoke tests with --enable-pgwire, [server].pg_enabled=true, or OPENSNOW_ENABLE_PGWIRE=1.
+psql -h localhost -p 5433</pre>
+      </div>
+      <div class="command">
+        <div class="command-header"><span>REST API query</span><button type="button" data-copy="curl http://localhost:8080/api/v1/query -H 'content-type: application/json' -d '{&quot;sql&quot;:&quot;SELECT 1 AS smoke;&quot;}'">Copy</button></div>
+        <pre>curl http://localhost:8080/api/v1/query \
+  -H 'content-type: application/json' \
+  -d '{"sql":"SELECT 1 AS smoke;"}'</pre>
+      </div>
+      <div class="command">
+        <div class="command-header"><span>Load demo data API</span><button type="button" data-copy="curl -X POST http://localhost:8080/api/v1/demo/load">Copy</button></div>
+        <pre>curl -X POST http://localhost:8080/api/v1/demo/load</pre>
+      </div>
+      <div class="help-list">
+        <p><strong>Clear error states:</strong> connection errors usually mean the OpenSnow server is not running or the wrong port is open. SQL errors include known limits and docs links where available.</p>
+        <p><strong>Public demo boundary:</strong> pgwire is disabled by default for public demos. Enable it only for trusted local compatibility smoke tests after reading docs/PUBLIC_TEST_PATH.md; current pgwire support is simple-query only.</p>
+        <p><strong>BI/dbt introspection:</strong> the supported compatibility pack is psql simple-query, basic <code>information_schema</code>, and REST <code>/api/v1/dbt/catalog</code>. Python drivers, COPY, extended query protocol, and general <code>pg_catalog</code> BI probes are not certified yet and should fail clearly.</p>
+        <p><strong>Evaluation sandbox boundary:</strong> hosted sandbox accounts use <code>/api/v1/evaluation/register</code>, generated <code>eval-*</code> tenants, tracked quotas, and operator suspend/revoke controls. They are not enterprise BYOC/customer-owned infrastructure accounts.</p>
+        <p><strong>Docs:</strong> <a href="/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a>, <a href="/docs/SQL_COMPATIBILITY.md">docs/SQL_COMPATIBILITY.md</a>, <a href="/docs/PUBLIC_TEST_PATH.md">docs/PUBLIC_TEST_PATH.md</a></p>
+      </div>
+    </aside>
+  </section>
+</main>
+
+<script>
+(function () {
+  var sqlEl = document.getElementById('sql');
+  var sampleEl = document.getElementById('sample-query');
+  var runBtn = document.getElementById('run-btn');
+  var clearBtn = document.getElementById('clear-btn');
+  var loadDemoBtn = document.getElementById('load-demo-btn');
+  var resultsEl = document.getElementById('results');
+  var statusBar = document.getElementById('status-bar');
+  var connectionPill = document.getElementById('connection-pill');
+  var connectionText = document.getElementById('connection-text');
+
+  function setText(el, text, className) {
+    el.textContent = text;
+    el.className = className || '';
+  }
+
+  function setConnection(text, kind) {
+    connectionText.textContent = 'Connection status: ' + text;
+    connectionPill.className = 'status-pill ' + (kind || '');
+  }
+
+  function showEmpty(title, message) {
+    resultsEl.textContent = '';
+    var box = document.createElement('div');
+    box.className = 'empty';
+    var h = document.createElement('h3');
+    h.textContent = title;
+    var p = document.createElement('p');
+    p.textContent = message;
+    box.appendChild(h);
+    box.appendChild(p);
+    resultsEl.appendChild(box);
+  }
+
+  function showError(msg) {
+    resultsEl.textContent = '';
+    var box = document.createElement('div');
+    box.className = 'error';
+    box.textContent = msg;
+    resultsEl.appendChild(box);
+  }
+
+  function parseNdjson(text) {
+    if (!text) return [];
+    return text.split('\n').filter(function (line) { return line.trim(); }).map(function (line) {
+      try { return JSON.parse(line); } catch (e) { return { parse_error: line }; }
+    });
+  }
+
+  function renderRows(rows) {
+    resultsEl.textContent = '';
+    if (!rows.length) {
+      showEmpty('Query executed successfully', 'No rows returned.');
+      return;
+    }
+    var keys = Object.keys(rows[0]);
+    var table = document.createElement('table');
+    table.className = 'data';
+    var thead = document.createElement('thead');
+    var headerRow = document.createElement('tr');
+    keys.forEach(function (key) {
+      var th = document.createElement('th');
+      th.textContent = key;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    rows.forEach(function (row) {
+      var tr = document.createElement('tr');
+      keys.forEach(function (key) {
+        var td = document.createElement('td');
+        var value = row[key];
+        td.textContent = value === null || value === undefined ? 'NULL' : String(value);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    resultsEl.appendChild(table);
+  }
+
+  async function fetchJson(url, options) {
+    var res = await fetch(url, options || {});
+    var text = await res.text();
+    var data;
+    try { data = text ? JSON.parse(text) : {}; } catch (e) { throw new Error('Invalid JSON from ' + url + ': ' + text.slice(0, 160)); }
+    if (!res.ok) throw new Error((data.message || data.error || res.statusText) + ' (HTTP ' + res.status + ')');
+    return data;
+  }
+
+  async function checkStatus() {
+    try {
+      var health = await fetchJson('/health');
+      var status = await fetchJson('/api/v1/status');
+      setConnection((health.status || 'ok') + ' · ' + (status.engine || 'engine ready'), 'ok');
+    } catch (err) {
+      setConnection('error — ' + err.message, 'err');
+      setText(statusBar, 'Server connection failed. Start OpenSnow and refresh this page.', 'err');
+    }
+  }
+
+  async function loadDemoData() {
+    loadDemoBtn.disabled = true;
+    loadDemoBtn.textContent = 'Loading…';
+    setText(statusBar, 'Loading demo data into opensnow_demo_orders…', 'warn');
+    try {
+      var data = await fetchJson('/api/v1/demo/load', { method: 'POST' });
+      if (data.status !== 'ok') throw new Error(data.message || 'Demo load failed');
+      sqlEl.value = data.sample_query;
+      sampleEl.value = data.sample_query;
+      setText(statusBar, 'Demo data loaded: ' + data.rows_ingested + ' rows in ' + data.table + '. Run the sample query next.', 'ok');
+      showEmpty('Demo data loaded', data.next_step || 'Run the selected sample query.');
+    } catch (err) {
+      showError('Load demo data failed: ' + err.message + '\n\nCheck docs/DEPLOYMENT.md and verify the server is healthy.');
+      setText(statusBar, 'Demo load error', 'err');
+    } finally {
+      loadDemoBtn.disabled = false;
+      loadDemoBtn.textContent = 'Load demo data';
+    }
+  }
+
+  async function runQuery() {
+    var sql = sqlEl.value.trim();
+    if (!sql) {
+      setText(statusBar, 'Enter SQL or pick a sample query first.', 'warn');
+      return;
+    }
+    runBtn.disabled = true;
+    runBtn.textContent = 'Running…';
+    setText(statusBar, 'Running query…', 'warn');
+    var start = performance.now();
+    try {
+      var data = await fetchJson('/api/v1/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sql: sql })
+      });
+      var elapsedMs = Math.round(performance.now() - start);
+      if (data.status === 'ok') {
+        renderRows(parseNdjson(data.data || ''));
+        setText(statusBar, (data.rows || 0) + ' rows · ' + elapsedMs + ' ms', 'ok');
+      } else {
+        showError(data.message || 'Unknown query error');
+        setText(statusBar, 'Query error · ' + elapsedMs + ' ms', 'err');
+      }
+    } catch (err) {
+      showError('Connection failed: ' + err.message + '\n\nIf auth is enabled, use the token flow from docs/DEPLOYMENT.md or test with the API directly.');
+      setText(statusBar, 'Connection error', 'err');
+    } finally {
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run query';
+    }
+  }
+
+  sampleEl.addEventListener('change', function () { sqlEl.value = sampleEl.value; });
+  runBtn.addEventListener('click', runQuery);
+  loadDemoBtn.addEventListener('click', loadDemoData);
+  clearBtn.addEventListener('click', function () { sqlEl.value = ''; sqlEl.focus(); });
+  sqlEl.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      runQuery();
+    }
+  });
+  document.querySelectorAll('button[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var original = btn.textContent;
+      try {
+        await navigator.clipboard.writeText(btn.getAttribute('data-copy'));
+        btn.textContent = 'Copied';
+      } catch (err) {
+        btn.textContent = 'Select text';
+      }
+      window.setTimeout(function () { btn.textContent = original; }, 1400);
+    });
+  });
+
+  checkStatus();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "opensnow"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["opensnow:8080"]
+        labels:
+          instance: "opensnow-server"
+
+  # Coordinator binary in distributed deployments. Same /metrics path,
+  # different service name. Safe to leave enabled in single-node mode —
+  # an unreachable target just shows up as `up{job="..."} = 0`.
+  - job_name: "opensnow-coordinator"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["opensnow-coordinator:8080"]
+        labels:
+          component: "coordinator"

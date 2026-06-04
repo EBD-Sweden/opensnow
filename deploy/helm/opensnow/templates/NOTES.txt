@@ -1,0 +1,82 @@
+
+OpenSnow {{ .Chart.AppVersion }} has been deployed!
+
+Components:
+  - Coordinator: {{ .Values.coordinator.replicas }} replica(s)
+  - Worker:      {{ .Values.worker.replicas }} replica(s)
+{{- if .Values.mcp.enabled }}
+  - MCP Server:  {{ .Values.mcp.replicas }} replica(s)
+{{- end }}
+{{- if .Values.redis.enabled }}
+  - Redis:       standalone (job queue + warm pool)
+{{- end }}
+{{- if and .Values.metadata.builtin.enabled (not .Values.metadata.external.enabled) }}
+  - Metadata:    built-in PostgreSQL
+{{- else }}
+  - Metadata:    external ({{ .Values.metadata.external.host }}:{{ .Values.metadata.external.port }})
+{{- end }}
+
+{{- if eq .Values.gateway.type "LoadBalancer" }}
+
+Access the query API:
+  export SERVICE_IP=$(kubectl get svc {{ include "opensnow.fullname" . }}-gateway -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  # HTTP API
+  curl http://$SERVICE_IP:{{ .Values.gateway.port }}/health
+  # PostgreSQL wire protocol
+  {{- if .Values.coordinator.pgwireEnabled }}
+  psql -h $SERVICE_IP -p {{ .Values.gateway.postgresPort }} -U opensnow
+  {{- else }}
+  PostgreSQL wire protocol is disabled by default. Enable only for trusted environments:
+    helm upgrade --install {{ .Release.Name }} <chart-ref> --set coordinator.pgwireEnabled=true
+  {{- end }}
+{{- else if eq .Values.gateway.type "NodePort" }}
+
+Access the query API (NodePort):
+  export NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+  curl http://$NODE_IP:30080/health
+  {{- if .Values.coordinator.pgwireEnabled }}
+  psql -h $NODE_IP -p 30543 -U opensnow
+  {{- else }}
+  PostgreSQL wire protocol is disabled by default. Enable only for trusted environments:
+    helm upgrade --install {{ .Release.Name }} <chart-ref> --set coordinator.pgwireEnabled=true
+  {{- end }}
+{{- else }}
+
+Access the query API (port-forward):
+  kubectl port-forward svc/{{ include "opensnow.fullname" . }}-gateway {{ .Values.gateway.port }}:{{ .Values.gateway.port }} -n {{ .Release.Namespace }}
+  curl http://localhost:{{ .Values.gateway.port }}/health
+  {{- if .Values.coordinator.pgwireEnabled }}
+  # PostgreSQL wire protocol (trusted opt-in only)
+  kubectl port-forward svc/{{ include "opensnow.fullname" . }}-gateway {{ .Values.gateway.postgresPort }}:{{ .Values.gateway.postgresPort }} -n {{ .Release.Namespace }}
+  psql -h localhost -p {{ .Values.gateway.postgresPort }} -U opensnow
+  {{- else }}
+  PostgreSQL wire protocol is disabled by default. Enable only for trusted environments:
+    helm upgrade --install {{ .Release.Name }} <chart-ref> --set coordinator.pgwireEnabled=true
+  {{- end }}
+{{- end }}
+
+{{- if .Values.mcp.enabled }}
+
+MCP Server (for AI agent access):
+  kubectl port-forward svc/{{ include "opensnow.fullname" . }}-mcp {{ .Values.mcp.service.port }}:{{ .Values.mcp.service.port }} -n {{ .Release.Namespace }}
+  # MCP endpoint: http://localhost:{{ .Values.mcp.service.port }}
+{{- end }}
+
+{{- if .Values.keda.enabled }}
+
+KEDA autoscaling is enabled:
+  - Warm pool: {{ .Values.keda.idleReplicaCount }} idle replicas kept warm
+  - Scale range: {{ .Values.keda.minReplicaCount }}-{{ .Values.keda.maxReplicaCount }} workers
+  - Prerequisite: KEDA operator must be installed in the cluster
+    helm repo add kedacore https://kedacore.github.io/charts
+    helm install keda kedacore/keda -n keda-system --create-namespace
+{{- end }}
+
+{{- if .Values.minio.enabled }}
+
+MinIO (dev object storage):
+  kubectl port-forward svc/{{ include "opensnow.fullname" . }}-minio 9001:9001 -n {{ .Release.Namespace }}
+  # Console: http://localhost:9001
+  # Credentials come from your values/Secret (minio.rootUser / minio.rootPassword)
+  # and are intentionally not printed here.
+{{- end }}

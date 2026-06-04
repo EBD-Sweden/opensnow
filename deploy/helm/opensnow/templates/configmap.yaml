@@ -1,0 +1,269 @@
+{{- $enterpriseMode := .Values.enterprise.mode | default "test-instance" -}}
+{{- $enterpriseRequired := ne $enterpriseMode "test-instance" -}}
+{{- if and $enterpriseRequired (or .Values.metadata.builtin.enabled (not .Values.metadata.external.enabled) (not .Values.metadata.external.existingSecret)) -}}
+{{- fail "enterprise/BYOC renders require metadata.external.enabled=true, metadata.external.existingSecret, and metadata.builtin.enabled=false" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.marketplace.provider) -}}
+{{- fail "enterprise/BYOC renders require enterprise.marketplace.provider" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or .Values.enterprise.marketplace.enabled (eq $enterpriseMode "aws-marketplace")) (not .Values.enterprise.marketplace.productCode) -}}
+{{- fail "enterprise/BYOC renders require enterprise.marketplace.productCode" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or .Values.enterprise.marketplace.enabled (eq $enterpriseMode "aws-marketplace")) (not .Values.enterprise.marketplace.customerIdentifier) -}}
+{{- fail "enterprise/BYOC renders require enterprise.marketplace.customerIdentifier" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or .Values.enterprise.marketplace.enabled (eq $enterpriseMode "aws-marketplace")) (not .Values.enterprise.marketplace.entitlementId) -}}
+{{- fail "enterprise/BYOC marketplace renders must set enterprise.marketplace.entitlementId" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.oidc.enabled) -}}
+{{- fail "enterprise/BYOC renders require enterprise.oidc.enabled=true" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or (not .Values.enterprise.oidc.issuer) (not .Values.enterprise.oidc.clientId) (not .Values.enterprise.oidc.existingSecret)) -}}
+{{- fail "enterprise/BYOC renders require enterprise.oidc.issuer, enterprise.oidc.clientId, and enterprise.oidc.existingSecret" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or (not .Values.enterprise.jwt) (eq (.Values.enterprise.jwt.mode | default "local_hs256") "local_hs256")) -}}
+{{- fail "enterprise/BYOC renders require enterprise.jwt.mode=RS256 or ES256, not local_hs256" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or (not .Values.enterprise.jwt.issuer) (not .Values.enterprise.jwt.audience) (not .Values.enterprise.jwt.kid) (not .Values.enterprise.jwt.existingSecret)) -}}
+{{- fail "enterprise/BYOC renders require enterprise.jwt.issuer, audience, kid, and existingSecret" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (eq (.Values.enterprise.jwt.algorithm | default "RS256") "RS256") (not .Values.enterprise.jwt.jwkNKey) -}}
+{{- fail "enterprise/BYOC RS256 JWT renders require enterprise.jwt.jwkNKey in the existing secret" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.scim.enabled) -}}
+{{- fail "enterprise/BYOC renders require enterprise.scim.enabled=true" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or (not .Values.enterprise.scim.baseUrl) (not .Values.enterprise.scim.tokenExistingSecret)) -}}
+{{- fail "enterprise/BYOC renders require enterprise.scim.baseUrl and enterprise.scim.tokenExistingSecret" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.auditExport.enabled) -}}
+{{- fail "enterprise/BYOC renders require enterprise.auditExport.enabled=true" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.auditExport.bucket) -}}
+{{- fail "enterprise/BYOC renders require enterprise.auditExport.bucket" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.sealedSecrets.enabled) -}}
+{{- fail "enterprise/BYOC renders require enterprise.secret_provider.enabled=true (enterprise.sealedSecrets.enabled=true)" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or (not .Values.enterprise.sealedSecrets.provider) (not .Values.enterprise.sealedSecrets.kmsKeyArn)) -}}
+{{- fail "enterprise/BYOC renders require enterprise.secret_provider.provider and enterprise.secret_provider.kms_key_arn (enterprise.sealedSecrets.provider and enterprise.sealedSecrets.kmsKeyArn)" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not (has .Values.enterprise.sealedSecrets.provider (list "aws-secrets-manager" "gcp-secret-manager" "vault"))) -}}
+{{- fail "enterprise/BYOC renders require enterprise.secret_provider.provider to be aws-secrets-manager, gcp-secret-manager, or vault" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (or .Values.config.storage.access_key .Values.config.storage.secret_key) -}}
+{{- fail "enterprise/BYOC renders must use workload identity or secret handles, not inline object-store access keys" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.tls.enabled) -}}
+{{- fail "enterprise/BYOC renders require enterprise.tls.enabled=true" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (not .Values.enterprise.tls.existingSecret) -}}
+{{- fail "enterprise/BYOC renders require enterprise.tls.existingSecret" -}}
+{{- end -}}
+{{- if and $enterpriseRequired (eq .Values.gateway.type "LoadBalancer") (not .Values.gateway.loadBalancerSourceRanges) -}}
+{{- fail "enterprise/BYOC LoadBalancer renders require gateway.loadBalancerSourceRanges" -}}
+{{- end -}}
+{{- if and $enterpriseRequired .Values.coordinator.pgwireEnabled (not .Values.enterprise.tls.enabled) -}}
+{{- fail "enterprise/BYOC pgwire exposure requires enterprise.tls.enabled=true" -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opensnow.fullname" . }}-config
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+data:
+  opensnow.toml: |
+    # OpenSnow Configuration
+    # Environment variables with OPENSNOW_ prefix override these values.
+
+    [server]
+    http_port = {{ .Values.coordinator.ports.http }}
+    pg_port = {{ .Values.coordinator.ports.postgres }}
+    pg_enabled = {{ .Values.coordinator.pgwireEnabled }}
+    host = "0.0.0.0"
+
+    [storage]
+    warehouse_path = {{ default "/tmp/opensnow/warehouse" .Values.config.storage.warehouse_path | quote }}
+    {{- if .Values.config.storage.endpoint }}
+    s3_endpoint = {{ .Values.config.storage.endpoint | quote }}
+    {{- end }}
+    {{- if .Values.config.storage.bucket }}
+    s3_bucket = {{ .Values.config.storage.bucket | quote }}
+    {{- end }}
+    {{- if .Values.config.storage.region }}
+    s3_region = {{ .Values.config.storage.region | quote }}
+    {{- end }}
+    s3_allow_insecure_http = {{ .Values.config.storage.allowInsecureHttp | default false }}
+    [catalog]
+    path = {{ default "/tmp/opensnow/catalog.db" .Values.config.catalog.path | quote }}
+
+    [enterprise]
+    mode = {{ .Values.enterprise.mode | quote }}
+    account_id = {{ .Values.enterprise.accountIdentity.accountId | quote }}
+    organization_id = {{ .Values.enterprise.accountIdentity.organizationId | quote }}
+    workspace_id = {{ .Values.enterprise.accountIdentity.workspaceId | quote }}
+    entitlement_required = {{ .Values.enterprise.entitlements.required }}
+    marketplace_provider = {{ .Values.enterprise.marketplace.provider | quote }}
+    marketplace_product_code = {{ .Values.enterprise.marketplace.productCode | quote }}
+    marketplace_customer_identifier = {{ .Values.enterprise.marketplace.customerIdentifier | quote }}
+    marketplace_entitlement_id = {{ .Values.enterprise.marketplace.entitlementId | quote }}
+
+    [enterprise.audit_export]
+    enabled = {{ .Values.enterprise.auditExport.enabled }}
+    bucket = {{ .Values.enterprise.auditExport.bucket | quote }}
+    prefix = {{ .Values.enterprise.auditExport.prefix | quote }}
+
+    [enterprise.secret_provider]
+    enabled = {{ .Values.enterprise.sealedSecrets.enabled }}
+    provider = {{ .Values.enterprise.sealedSecrets.provider | quote }}
+    kms_key_arn = {{ .Values.enterprise.sealedSecrets.kmsKeyArn | quote }}
+---
+## Metadata secret (only when using built-in metadata Postgres)
+{{- if and .Values.metadata.builtin.enabled (not .Values.metadata.external.enabled) }}
+{{- $metadataSecretName := printf "%s-metadata" (include "opensnow.fullname" .) }}
+{{- $existingMetadataSecret := lookup "v1" "Secret" .Release.Namespace $metadataSecretName }}
+{{- $metadataPassword := "" }}
+{{- if .Values.metadata.builtin.password }}
+{{- $metadataPassword = .Values.metadata.builtin.password }}
+{{- else if and $existingMetadataSecret (hasKey $existingMetadataSecret.data "password") }}
+{{- $metadataPassword = index $existingMetadataSecret.data "password" | b64dec }}
+{{- else }}
+{{- $metadataPassword = randAlphaNum 48 }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $metadataSecretName }}
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+type: Opaque
+data:
+  password: {{ $metadataPassword | b64enc | quote }}
+{{- end }}
+---
+## Storage secret (only for explicit non-cloud-identity credentials).
+## Prefer config.storage.existingSecret or cloud workload identity in production.
+{{- if and (or .Values.config.storage.access_key .Values.config.storage.secret_key) (not .Values.config.storage.existingSecret) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "opensnow.fullname" . }}-storage
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+type: Opaque
+data:
+  access-key: {{ .Values.config.storage.access_key | default "" | b64enc | quote }}
+  secret-key: {{ .Values.config.storage.secret_key | b64enc | quote }}
+{{- end }}
+---
+## Built-in Metadata PostgreSQL StatefulSet
+{{- if and .Values.metadata.builtin.enabled (not .Values.metadata.external.enabled) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "opensnow.fullname" . }}-metadata
+  labels:
+    {{- include "opensnow.metadata.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "opensnow.fullname" . }}-metadata
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "opensnow.metadata.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "opensnow.metadata.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.metadata.builtin.image.repository }}:{{ .Values.metadata.builtin.image.tag }}"
+          imagePullPolicy: {{ .Values.metadata.builtin.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.metadata.builtin.port }}
+              protocol: TCP
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.metadata.builtin.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.metadata.builtin.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "opensnow.fullname" . }}-metadata
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.metadata.builtin.username | quote }}
+                - -d
+                - {{ .Values.metadata.builtin.database | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.metadata.builtin.username | quote }}
+                - -d
+                - {{ .Values.metadata.builtin.database | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.metadata.builtin.resources | nindent 12 }}
+      {{- with .Values.metadata.builtin.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metadata.builtin.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.metadata.builtin.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "opensnow.metadata.labels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.metadata.builtin.storage.storageClass }}
+        storageClassName: {{ .Values.metadata.builtin.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.metadata.builtin.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opensnow.fullname" . }}-metadata
+  labels:
+    {{- include "opensnow.metadata.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "opensnow.metadata.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgres
+      port: {{ .Values.metadata.builtin.port }}
+      targetPort: postgres
+      protocol: TCP
+{{- end }}

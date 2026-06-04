@@ -1,0 +1,6 @@
+services:
+  opensnow:
+    environment:
+      OPENSNOW_ENABLE_PGWIRE: "1"
+    ports:
+      - "127.0.0.1:5433:5433"

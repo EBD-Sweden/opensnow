@@ -1,0 +1,65 @@
+[server]
+http_port = 8080
+pg_port    = 5433
+pg_enabled = false # disabled by default: unauthenticated pgwire is only for trusted local smoke tests
+# Loopback by default. To expose the listeners set host = "0.0.0.0" AND enable
+# auth (OPENSNOW_JWT_SECRET), or set OPENSNOW_ALLOW_PUBLIC=1 to explicitly
+# accept an unauthenticated public listener.
+host       = "127.0.0.1"
+
+[storage]
+# ── Local filesystem (dev / single-node) ──────────────────────────────────────
+warehouse_path = "~/.opensnow/warehouse"
+
+# ── AWS S3 / MinIO / S3-compatible ────────────────────────────────────────────
+# Uncomment to use S3. On AWS EKS, leave access_key/secret_key empty — IRSA
+# (IAM Roles for Service Accounts) provides credentials automatically.
+# Traffic from EKS → S3 uses the VPC Gateway Endpoint (private, free, ~1ms).
+#
+# s3_bucket     = "my-opensnow-warehouse"
+# s3_region     = "us-east-1"
+# s3_access_key = ""                   # empty = IRSA / instance profile
+# s3_secret_key = ""
+#
+# MinIO (on-prem / local K8s). Use demo-only placeholders or env/Secret values;
+# never commit real credentials.
+# s3_endpoint   = "http://minio.storage.svc:9000"
+# s3_allow_insecure_http = true          # local/private MinIO HTTP only
+# s3_bucket     = "opensnow"
+# s3_access_key = "OPEN/SNOW/DEMO/ONLY"
+# s3_secret_key = "OPEN/SNOW/DEMO/ONLY/STORAGE"
+
+# ── Google Cloud Storage ───────────────────────────────────────────────────────
+# On GKE, leave service_account_path empty — Workload Identity provides
+# credentials automatically. Private Google Access keeps traffic off the internet.
+#
+# gcs_bucket                = "my-opensnow-warehouse"
+# gcs_project_id            = "my-gcp-project"
+# gcs_service_account_path  = ""       # empty = Workload Identity / ADC
+
+# ── Azure Blob Storage ─────────────────────────────────────────────────────────
+# On AKS, leave account_key empty — Managed Identity provides credentials.
+# Add a Private Endpoint to route traffic over the Azure backbone (not internet).
+#
+# azure_container    = "opensnow"
+# azure_account_name = "myopensnowstorage"
+# azure_account_key  = ""              # empty = Managed Identity / az login
+#
+# Service principal (for CI/CD or non-AKS):
+# azure_client_id     = ""
+# azure_client_secret = ""
+# azure_tenant_id     = ""
+
+[catalog]
+path = "~/.opensnow/catalog.db"        # SQLite (dev)
+# database_url = "postgresql://..."    # PostgreSQL (production)
+
+# Authentication is configured via environment variables, not this file.
+# Set OPENSNOW_JWT_SECRET to enable HS256 JWT auth, or the OPENSNOW_JWT_*
+# enterprise variables for RS256/ES256. See docs/DEPLOYMENT.md and SECURITY.md.
+
+[rapids]
+enabled              = false           # GPU acceleration (requires NVIDIA + cuDF)
+python_bin           = "python3"
+gpu_memory_limit_mb  = 4096
+fallback_to_cpu      = true

@@ -1,0 +1,373 @@
+## OpenSnow Warehouse CRD
+## Defines a Warehouse custom resource for the OpenSnow operator.
+## The operator reconciles Warehouse resources into Coordinator Deployments,
+## Worker StatefulSets, and associated Services.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: warehouses.opensnow.io
+  labels:
+    app.kubernetes.io/name: opensnow
+    app.kubernetes.io/part-of: opensnow-operator
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: opensnow.io
+  names:
+    kind: Warehouse
+    listKind: WarehouseList
+    plural: warehouses
+    singular: warehouse
+    shortNames:
+      - wh
+    categories:
+      - opensnow
+      - analytics
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+        scale:
+          specReplicasPath: .spec.workers.replicas
+          statusReplicasPath: .status.workerReplicas
+          labelSelectorPath: .status.selector
+      additionalPrinterColumns:
+        - name: State
+          type: string
+          jsonPath: .status.state
+        - name: Coordinators
+          type: integer
+          jsonPath: .status.coordinatorReplicas
+        - name: Workers
+          type: integer
+          jsonPath: .status.workerReplicas
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: Warehouse is the Schema for the warehouses API. It represents a logical analytics warehouse consisting of coordinators and workers.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - image
+                - coordinator
+                - workers
+                - metadata
+                - storage
+              properties:
+                image:
+                  type: object
+                  description: Container image configuration.
+                  required:
+                    - repository
+                  properties:
+                    repository:
+                      type: string
+                      description: Image repository.
+                    tag:
+                      type: string
+                      default: "latest"
+                      description: Image tag.
+                    pullPolicy:
+                      type: string
+                      enum: ["Always", "IfNotPresent", "Never"]
+                      default: "IfNotPresent"
+                    pullSecrets:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+
+                coordinator:
+                  type: object
+                  description: Coordinator configuration.
+                  required:
+                    - replicas
+                  properties:
+                    replicas:
+                      type: integer
+                      minimum: 1
+                      default: 2
+                      description: Number of coordinator replicas.
+                    ports:
+                      type: object
+                      properties:
+                        http:
+                          type: integer
+                          default: 8080
+                        postgres:
+                          type: integer
+                          default: 5433
+                        grpc:
+                          type: integer
+                          default: 9100
+                    resources:
+                      type: object
+                      description: Kubernetes resource requirements.
+                      properties:
+                        requests:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        limits:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                    autoscaling:
+                      type: object
+                      description: HPA configuration for coordinator.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                        minReplicas:
+                          type: integer
+                          minimum: 1
+                        maxReplicas:
+                          type: integer
+                          minimum: 1
+                        targetCPUUtilizationPercentage:
+                          type: integer
+                          minimum: 1
+                          maximum: 100
+
+                workers:
+                  type: object
+                  description: Worker pool configuration.
+                  required:
+                    - replicas
+                  properties:
+                    replicas:
+                      type: integer
+                      minimum: 0
+                      default: 3
+                      description: Number of worker replicas. Set to 0 for scale-to-zero with KEDA.
+                    ports:
+                      type: object
+                      properties:
+                        grpc:
+                          type: integer
+                          default: 9092
+                    resources:
+                      type: object
+                      description: Kubernetes resource requirements.
+                      properties:
+                        requests:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        limits:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                    cache:
+                      type: object
+                      description: Local disk cache for intermediate data.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        storageClass:
+                          type: string
+                          description: StorageClass for cache PVCs.
+                        size:
+                          type: string
+                          default: "100Gi"
+                          description: Size of each worker cache PVC.
+                          pattern: "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti)$"
+                    autoscaling:
+                      type: object
+                      description: KEDA-based autoscaling for workers.
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                        minReplicas:
+                          type: integer
+                          minimum: 0
+                        maxReplicas:
+                          type: integer
+                          minimum: 1
+                        prometheusAddress:
+                          type: string
+                          description: Prometheus server address for KEDA trigger.
+                        scaleToZero:
+                          type: boolean
+                          default: true
+                          description: Whether to allow scaling to zero workers.
+                        cooldownPeriod:
+                          type: integer
+                          default: 300
+                          description: Seconds to wait before scaling down.
+                    podDisruptionBudget:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: true
+                        minAvailable:
+                          x-kubernetes-int-or-string: true
+
+                metadata:
+                  type: object
+                  description: Metadata store (catalog) configuration.
+                  required:
+                    - type
+                  properties:
+                    type:
+                      type: string
+                      enum: ["postgres", "external"]
+                      description: "'postgres' uses a built-in StatefulSet; 'external' connects to an existing database."
+                    builtin:
+                      type: object
+                      description: Built-in PostgreSQL configuration.
+                      properties:
+                        image:
+                          type: string
+                          default: "postgres:16-alpine"
+                        storage:
+                          type: object
+                          properties:
+                            storageClass:
+                              type: string
+                            size:
+                              type: string
+                              default: "20Gi"
+                        resources:
+                          type: object
+                          properties:
+                            requests:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            limits:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                    external:
+                      type: object
+                      description: External database connection.
+                      properties:
+                        host:
+                          type: string
+                        port:
+                          type: integer
+                          default: 5432
+                        database:
+                          type: string
+                        username:
+                          type: string
+                        secretRef:
+                          type: object
+                          description: Reference to a Secret containing the password.
+                          properties:
+                            name:
+                              type: string
+                            key:
+                              type: string
+                              default: "password"
+
+                storage:
+                  type: object
+                  description: Object storage configuration.
+                  required:
+                    - type
+                    - bucket
+                  properties:
+                    type:
+                      type: string
+                      enum: ["s3", "gcs", "azure", "local"]
+                    bucket:
+                      type: string
+                      description: Bucket or container name.
+                    endpoint:
+                      type: string
+                      description: Custom endpoint (for MinIO or S3-compatible stores).
+                    region:
+                      type: string
+                      default: "us-east-1"
+                    credentialsSecretRef:
+                      type: object
+                      description: Reference to a Secret containing access credentials.
+                      properties:
+                        name:
+                          type: string
+                        accessKeyField:
+                          type: string
+                          default: "access-key"
+                        secretKeyField:
+                          type: string
+                          default: "secret-key"
+
+                config:
+                  type: object
+                  description: Additional warehouse configuration overrides.
+                  properties:
+                    maxConcurrentQueries:
+                      type: integer
+                      default: 64
+                    queryTimeoutSeconds:
+                      type: integer
+                      default: 300
+                    cacheEvictionPolicy:
+                      type: string
+                      enum: ["lru", "lfu", "fifo"]
+                      default: "lru"
+
+                suspend:
+                  type: boolean
+                  default: false
+                  description: When true, the operator scales all components to zero (warehouse suspension).
+
+            status:
+              type: object
+              properties:
+                state:
+                  type: string
+                  description: "Overall warehouse state."
+                  enum:
+                    - Provisioning
+                    - Running
+                    - Suspended
+                    - Degraded
+                    - Error
+                coordinatorReplicas:
+                  type: integer
+                  description: Current number of ready coordinator replicas.
+                workerReplicas:
+                  type: integer
+                  description: Current number of ready worker replicas.
+                selector:
+                  type: string
+                  description: Label selector for pods (used by scale subresource).
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                lastScaleTime:
+                  type: string
+                  format: date-time

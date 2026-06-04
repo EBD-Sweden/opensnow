@@ -1,0 +1,86 @@
+[workspace]
+members = [
+    "crates/opensnow-core",
+    "crates/opensnow-storage",
+    "crates/opensnow-catalog",
+    "crates/opensnow-server",
+    "crates/opensnow-distributed",
+    "crates/opensnow-cli",
+    "crates/opensnow-ingest",
+    "crates/opensnow-iceberg",
+    "crates/opensnow-industry",
+    "crates/opensnow-agent",
+    "crates/opensnow-compat",
+    "crates/opensnow-auth",
+    "crates/opensnow-rapids",
+    "crates/opensnow-mcp",
+    "crates/opensnow-queue",
+    "bench",
+    "tests/e2e",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/opensnow/opensnow"
+
+[workspace.dependencies]
+# Arrow ecosystem
+datafusion = { version = "45", features = ["parquet"] }
+arrow = { version = "54", features = ["prettyprint"] }
+parquet = { version = "54", features = ["async"] }
+object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+pgwire = "0.28"
+arrow-flight = { version = "54", features = ["flight-sql-experimental"] }
+tonic = "0.12"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# OpenTelemetry — span export pipeline for the query path
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-stdout = "0.27"
+tracing-opentelemetry = "0.28"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Misc
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Internal crates
+opensnow-core = { path = "crates/opensnow-core" }
+opensnow-storage = { path = "crates/opensnow-storage" }
+opensnow-catalog = { path = "crates/opensnow-catalog" }
+opensnow-server = { path = "crates/opensnow-server" }
+opensnow-distributed = { path = "crates/opensnow-distributed" }
+opensnow-ingest = { path = "crates/opensnow-ingest" }
+opensnow-industry = { path = "crates/opensnow-industry" }
+opensnow-auth = { path = "crates/opensnow-auth" }
+opensnow-rapids = { path = "crates/opensnow-rapids" }
+opensnow-queue = { path = "crates/opensnow-queue" }
+opensnow-agent = { path = "crates/opensnow-agent" }

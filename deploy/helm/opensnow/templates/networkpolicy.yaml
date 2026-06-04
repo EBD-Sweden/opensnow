@@ -1,0 +1,230 @@
+{{- if .Values.networkPolicy.enabled }}
+## Coordinator: allow ingress from gateway, workers, and monitoring
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opensnow.fullname" . }}-coordinator
+  labels:
+    {{- include "opensnow.coordinator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opensnow.coordinator.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow HTTP + PG from any source (gateway traffic)
+    - ports:
+        - port: {{ .Values.coordinator.ports.http }}
+          protocol: TCP
+        - port: {{ .Values.coordinator.ports.postgres }}
+          protocol: TCP
+    # Allow gRPC from workers only
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.worker.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.coordinator.ports.grpc }}
+          protocol: TCP
+  egress:
+    # Allow to workers (gRPC)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.worker.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.worker.ports.grpc }}
+          protocol: TCP
+    # Allow to metadata (Postgres)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.metadata.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.metadata.builtin.port }}
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow to Redis
+    - to: []
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Allow to object storage (external or MinIO)
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+---
+## Workers: allow ingress from coordinator only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opensnow.fullname" . }}-worker
+  labels:
+    {{- include "opensnow.worker.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opensnow.worker.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow gRPC from coordinator
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.coordinator.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.worker.ports.grpc }}
+          protocol: TCP
+    # Allow gRPC from other workers (shuffle/exchange)
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.worker.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.worker.ports.grpc }}
+          protocol: TCP
+  egress:
+    # Allow to coordinator (gRPC)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.coordinator.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.coordinator.ports.grpc }}
+          protocol: TCP
+    # Allow to other workers (shuffle/exchange)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.worker.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.worker.ports.grpc }}
+          protocol: TCP
+    # Allow to metadata (Postgres)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.metadata.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.metadata.builtin.port }}
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow to Redis
+    - to: []
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Allow to object storage (external or MinIO)
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+---
+## MCP: allow ingress on MCP port, egress to coordinator and metadata
+{{- if .Values.mcp.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opensnow.fullname" . }}-mcp
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opensnow.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: {{ .Values.mcp.port }}
+          protocol: TCP
+  egress:
+    # Allow to coordinator (gRPC)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.coordinator.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.coordinator.ports.grpc }}
+          protocol: TCP
+    # Allow to metadata (Postgres)
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.metadata.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.metadata.builtin.port }}
+          protocol: TCP
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow to Redis
+    - to: []
+      ports:
+        - port: 6379
+          protocol: TCP
+{{- end }}
+---
+## Metadata: allow ingress from coordinator and workers only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opensnow.fullname" . }}-metadata
+  labels:
+    {{- include "opensnow.metadata.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opensnow.metadata.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.coordinator.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "opensnow.worker.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.metadata.builtin.port }}
+          protocol: TCP
+  egress:
+    # Allow DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}

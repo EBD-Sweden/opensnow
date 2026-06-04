@@ -1,0 +1,278 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "opensnow.fullname" . }}-coordinator
+  labels:
+    {{- include "opensnow.coordinator.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.coordinator.autoscaling.enabled }}
+  replicas: {{ .Values.coordinator.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "opensnow.coordinator.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.coordinator.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "opensnow.coordinator.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "opensnow.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: coordinator
+          image: {{ include "opensnow.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["opensnow"]
+          args:
+            - "start"
+            - "--role"
+            - "coordinator"
+            - "--config"
+            - "/etc/opensnow/opensnow.toml"
+            - "--grpc-port"
+            - {{ .Values.coordinator.ports.grpc | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.coordinator.ports.http }}
+              protocol: TCP
+            - name: postgres
+              containerPort: {{ .Values.coordinator.ports.postgres }}
+              protocol: TCP
+            - name: grpc
+              containerPort: {{ .Values.coordinator.ports.grpc }}
+              protocol: TCP
+          env:
+            - name: OPENSNOW_ROLE
+              value: "coordinator"
+            - name: OPENSNOW_COORDINATOR_HTTP_PORT
+              value: {{ .Values.coordinator.ports.http | quote }}
+            - name: OPENSNOW_COORDINATOR_PG_PORT
+              value: {{ .Values.coordinator.ports.postgres | quote }}
+            - name: OPENSNOW_COORDINATOR_GRPC_PORT
+              value: {{ .Values.coordinator.ports.grpc | quote }}
+            - name: OPENSNOW_WORKER_SERVICE
+              value: "{{ include "opensnow.fullname" . }}-worker-headless"
+            - name: OPENSNOW_WORKER_GRPC_PORT
+              value: {{ .Values.worker.ports.grpc | quote }}
+            - name: OPENSNOW_METADATA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  {{- if and .Values.metadata.external.enabled .Values.metadata.external.existingSecret }}
+                  name: {{ .Values.metadata.external.existingSecret }}
+                  key: {{ .Values.metadata.external.secretKey }}
+                  {{- else }}
+                  name: {{ include "opensnow.fullname" . }}-metadata
+                  key: password
+                  {{- end }}
+            - name: OPENSNOW_METADATA_DSN
+              value: {{ include "opensnow.metadata.dsn" . | quote }}
+            {{- if .Values.redis.enabled }}
+            - name: OPENSNOW_REDIS_URL
+              value: "redis://{{ include "opensnow.fullname" . }}-redis-master:6379"
+            {{- end }}
+            {{- if and .Values.enterprise.jwt (ne (.Values.enterprise.jwt.mode | default "local_hs256") "local_hs256") }}
+            - name: OPENSNOW_JWT_MODE
+              value: {{ .Values.enterprise.jwt.mode | quote }}
+            - name: OPENSNOW_JWT_ALGORITHM
+              value: {{ .Values.enterprise.jwt.algorithm | default "RS256" | quote }}
+            - name: OPENSNOW_JWT_ISSUER
+              value: {{ .Values.enterprise.jwt.issuer | quote }}
+            - name: OPENSNOW_JWT_AUDIENCE
+              value: {{ .Values.enterprise.jwt.audience | quote }}
+            - name: OPENSNOW_JWT_KID
+              value: {{ .Values.enterprise.jwt.kid | quote }}
+            - name: OPENSNOW_JWT_PRIVATE_KEY_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.privateKeyKey }}
+            - name: OPENSNOW_JWT_PUBLIC_KEY_PEM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.publicKeyKey }}
+            {{- if eq (.Values.enterprise.jwt.algorithm | default "RS256") "RS256" }}
+            - name: OPENSNOW_JWT_JWK_N
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.jwkNKey }}
+            - name: OPENSNOW_JWT_JWK_E
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.jwkEKey }}
+            {{- else }}
+            - name: OPENSNOW_JWT_JWK_X
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.jwkXKey }}
+            - name: OPENSNOW_JWT_JWK_Y
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.jwkYKey }}
+            {{- end }}
+            {{- if .Values.enterprise.jwt.revokedKids }}
+            - name: OPENSNOW_JWT_REVOKED_KIDS
+              value: {{ .Values.enterprise.jwt.revokedKids | quote }}
+            {{- end }}
+            {{- if .Values.enterprise.jwt.verificationKeysJsonKey }}
+            - name: OPENSNOW_JWT_VERIFICATION_KEYS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enterprise.jwt.existingSecret }}
+                  key: {{ .Values.enterprise.jwt.verificationKeysJsonKey }}
+                  optional: true
+            {{- end }}
+            {{- end }}
+            {{- if or .Values.config.storage.access_key .Values.config.storage.existingSecret }}
+            - name: OPENSNOW_STORAGE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.config.storage.existingSecret }}
+                  name: {{ .Values.config.storage.existingSecret }}
+                  key: {{ .Values.config.storage.accessKeySecretKey | default "access-key" }}
+                  {{- else }}
+                  name: {{ include "opensnow.fullname" . }}-storage
+                  key: access-key
+                  {{- end }}
+            {{- end }}
+            {{- if or .Values.config.storage.secret_key .Values.config.storage.existingSecret }}
+            - name: OPENSNOW_STORAGE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.config.storage.existingSecret }}
+                  name: {{ .Values.config.storage.existingSecret }}
+                  key: {{ .Values.config.storage.secretKeySecretKey | default "secret-key" }}
+                  {{- else }}
+                  name: {{ include "opensnow.fullname" . }}-storage
+                  key: secret-key
+                  {{- end }}
+            {{- end }}
+            {{- with .Values.coordinator.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/opensnow
+              readOnly: true
+          {{- with .Values.coordinator.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.coordinator.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.coordinator.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "opensnow.fullname" . }}-config
+      {{- with .Values.coordinator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.coordinator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opensnow.fullname" . }}-coordinator
+  labels:
+    {{- include "opensnow.coordinator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "opensnow.coordinator.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.coordinator.ports.http }}
+      targetPort: http
+      protocol: TCP
+    - name: postgres
+      port: {{ .Values.coordinator.ports.postgres }}
+      targetPort: postgres
+      protocol: TCP
+    - name: grpc
+      port: {{ .Values.coordinator.ports.grpc }}
+      targetPort: grpc
+      protocol: TCP
+---
+{{- if .Values.coordinator.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "opensnow.fullname" . }}-coordinator
+  labels:
+    {{- include "opensnow.coordinator.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "opensnow.fullname" . }}-coordinator
+  minReplicas: {{ .Values.coordinator.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.coordinator.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.coordinator.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.coordinator.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.coordinator.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.coordinator.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+{{- end }}

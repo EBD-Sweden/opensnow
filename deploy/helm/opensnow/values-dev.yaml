@@ -1,0 +1,188 @@
+## OpenSnow Helm Chart - Local Development Overrides
+## Usage: helm install opensnow ./deploy/helm/opensnow -f ./deploy/helm/opensnow/values-dev.yaml
+
+image:
+  repository: opensnow/opensnow
+  tag: dev
+  pullPolicy: Always
+
+## -------------------------------------------------------------------
+## Coordinator - minimal for dev
+## -------------------------------------------------------------------
+coordinator:
+  replicas: 1
+  # Keep pgwire disabled for default public/dev demos; opt in only for trusted local smoke tests.
+  pgwireEnabled: false
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: 256Mi
+    limits:
+      cpu: "500m"
+      memory: 512Mi
+
+  autoscaling:
+    enabled: false
+
+## -------------------------------------------------------------------
+## Workers - single replica, small cache
+## -------------------------------------------------------------------
+worker:
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  cache:
+    enabled: true
+    storageClass: standard
+    size: 5Gi
+
+  livenessProbe: null
+  readinessProbe: null
+
+  podDisruptionBudget:
+    enabled: false
+
+## -------------------------------------------------------------------
+## Metadata - lightweight built-in Postgres
+## -------------------------------------------------------------------
+metadata:
+  external:
+    enabled: false
+  builtin:
+    enabled: true
+    # Local-demo override is intentionally empty: Helm reuses an existing
+    # release Secret or generates unique per-install material on first install.
+    password: ""
+
+    storage:
+      storageClass: standard
+      size: 1Gi
+
+    resources:
+      requests:
+        cpu: "50m"
+        memory: 128Mi
+      limits:
+        cpu: "250m"
+        memory: 256Mi
+
+## -------------------------------------------------------------------
+## Gateway - NodePort for local access
+## -------------------------------------------------------------------
+gateway:
+  type: NodePort
+  port: 8080
+  postgresPort: 5433
+
+## -------------------------------------------------------------------
+## Configuration overrides
+## -------------------------------------------------------------------
+config:
+  warehouse:
+    name: "dev"
+    max_concurrent_queries: 4
+    query_timeout_seconds: 60
+
+  storage:
+    type: "s3"
+    bucket: "opensnow-data"
+    endpoint: "http://opensnow-minio:9000"
+    region: "us-east-1"
+    allowInsecureHttp: true
+    access_key: ""
+    secret_key: ""
+    existingSecret: ""
+
+  cache:
+    enabled: true
+    max_size_bytes: 5368709120  # 5 GiB
+    eviction_policy: "lru"
+
+## -------------------------------------------------------------------
+## MCP Server - enabled for dev
+## -------------------------------------------------------------------
+mcp:
+  enabled: true
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: 128Mi
+    limits:
+      cpu: "250m"
+      memory: 256Mi
+
+## -------------------------------------------------------------------
+## Redis - enabled for dev (job queue + warm pool)
+## -------------------------------------------------------------------
+redis:
+  enabled: true
+  architecture: standalone
+  image:
+    tag: latest
+    pullPolicy: IfNotPresent
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      storageClass: standard
+      size: 1Gi
+    resources:
+      requests:
+        cpu: "50m"
+        memory: 64Mi
+      limits:
+        cpu: "250m"
+        memory: 256Mi
+
+## -------------------------------------------------------------------
+## KEDA - disabled for dev (no KEDA operator expected locally)
+## -------------------------------------------------------------------
+keda:
+  enabled: false
+
+## -------------------------------------------------------------------
+## MinIO - enabled for local dev
+## -------------------------------------------------------------------
+minio:
+  enabled: true
+  mode: standalone
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: standard
+  resources:
+    requests:
+      cpu: "50m"
+      memory: 256Mi
+  # DEV ONLY placeholder credentials — override or supply from a Secret for any
+  # shared/production cluster.
+  rootUser: "OPEN-SNOW-DEV-USER"
+  rootPassword: "CHANGE-ME-DEV-ONLY"
+  buckets:
+    - name: opensnow-data
+      policy: none
+      purge: false
+
+## -------------------------------------------------------------------
+## Network Policies - disabled for dev simplicity
+## -------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+
+## -------------------------------------------------------------------
+## Monitoring - disabled for dev
+## -------------------------------------------------------------------
+monitoring:
+  enabled: false

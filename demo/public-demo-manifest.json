@@ -1,0 +1,71 @@
+{
+  "name": "opensnow-public-demo",
+  "version": "2026-05-28",
+  "seed": 424242,
+  "synthetic": true,
+  "deterministic": true,
+  "source": "generated",
+  "contains_real_customer_data": false,
+  "description": "Small deterministic retail-style dataset for public OpenSnow demos. Values are synthetic and stable so docs, smoke checks, screenshots, and QA can compare outputs across runs.",
+  "reset": {
+    "command": "scripts/demo.sh reset",
+    "removes": [".opensnow-demo/"]
+  },
+  "tables": [
+    {
+      "name": "demo_regions",
+      "row_count": 4,
+      "columns": ["region_id", "region", "country"],
+      "rows": [
+        [1, "nordics", "Sweden"],
+        [2, "dach", "Germany"],
+        [3, "benelux", "Netherlands"],
+        [4, "iberia", "Spain"]
+      ]
+    },
+    {
+      "name": "demo_customers",
+      "row_count": 6,
+      "columns": ["customer_id", "customer_name", "region_id", "segment"],
+      "rows": [
+        [101, "Aurora Labs", 1, "startup"],
+        [102, "Boreal Telecom", 1, "enterprise"],
+        [103, "Rhine Retail", 2, "midmarket"],
+        [104, "Canal Analytics", 3, "startup"],
+        [105, "Iberia Foods", 4, "enterprise"],
+        [106, "Northwind Demo", 2, "midmarket"]
+      ]
+    },
+    {
+      "name": "demo_orders",
+      "row_count": 12,
+      "columns": ["order_id", "customer_id", "order_date", "amount_usd", "status"],
+      "rows": [
+        [1001, 101, "2026-01-03", 1200.0, "paid"],
+        [1002, 102, "2026-01-05", 8450.0, "paid"],
+        [1003, 103, "2026-01-08", 2310.5, "paid"],
+        [1004, 104, "2026-01-10", 990.0, "trial"],
+        [1005, 105, "2026-01-12", 12400.0, "paid"],
+        [1006, 106, "2026-01-14", 3100.0, "paid"],
+        [1007, 101, "2026-02-01", 1800.0, "paid"],
+        [1008, 102, "2026-02-03", 9050.0, "paid"],
+        [1009, 103, "2026-02-06", 2600.0, "paid"],
+        [1010, 104, "2026-02-07", 1150.0, "paid"],
+        [1011, 105, "2026-02-09", 12875.0, "paid"],
+        [1012, 106, "2026-02-11", 3400.0, "paid"]
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "name": "orders_by_status",
+      "sql": "SELECT status, COUNT(*) AS orders FROM demo_orders GROUP BY status ORDER BY status",
+      "expected_rows": 2
+    },
+    {
+      "name": "paid_revenue",
+      "sql": "SELECT ROUND(SUM(amount_usd), 2) AS paid_revenue FROM demo_orders WHERE status = 'paid'",
+      "expected_rows": 1
+    }
+  ]
+}

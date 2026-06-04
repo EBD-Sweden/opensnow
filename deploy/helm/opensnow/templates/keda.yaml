@@ -1,0 +1,93 @@
+{{- if .Values.keda.enabled }}
+## KEDA TriggerAuthentication for Redis (warm-pool queue trigger)
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "opensnow.fullname" . }}-redis-trigger
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  redis-password: {{ .Values.redis.auth.password | default "" | quote }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "opensnow.fullname" . }}-redis-auth
+  labels:
+    {{- include "opensnow.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ include "opensnow.fullname" . }}-redis-trigger
+      key: redis-password
+---
+{{- end }}
+## KEDA ScaledObject for workers
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "opensnow.fullname" . }}-worker
+  labels:
+    {{- include "opensnow.worker.labels" . | nindent 4 }}
+    app.kubernetes.io/managed-by: keda
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "opensnow.fullname" . }}-worker
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  idleReplicaCount: {{ .Values.keda.idleReplicaCount }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  fallback:
+    failureThreshold: 3
+    replicas: {{ .Values.keda.minReplicaCount }}
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 60
+  triggers:
+    ## Pending queries from Prometheus
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheus.serverAddress | quote }}
+        metricName: opensnow_warehouse_pending_queries
+        query: |
+          sum(opensnow_warehouse_pending_queries{namespace="{{ .Release.Namespace }}"})
+        threshold: {{ .Values.keda.prometheus.pendingQueriesThreshold | quote }}
+        activationThreshold: "1"
+    ## CPU utilisation on workers
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheus.serverAddress | quote }}
+        metricName: opensnow_worker_cpu_utilization
+        query: |
+          avg(rate(container_cpu_usage_seconds_total{namespace="{{ .Release.Namespace }}", pod=~"{{ include "opensnow.fullname" . }}-worker-.*"}[2m]))
+        threshold: {{ .Values.keda.prometheus.cpuThreshold | quote }}
+        activationThreshold: "0"
+    {{- if .Values.redis.enabled }}
+    ## Redis job queue depth (warm-pool trigger)
+    - type: redis
+      metadata:
+        address: {{ include "opensnow.fullname" . }}-redis-master:6379
+        listName: {{ .Values.keda.redis.listName | quote }}
+        listLength: {{ .Values.keda.redis.listLength | quote }}
+      authenticationRef:
+        name: {{ include "opensnow.fullname" . }}-redis-auth
+    {{- end }}
+{{- end }}

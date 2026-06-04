@@ -1,0 +1,39 @@
+name: "opensnow_telecom_demo"
+version: "0.1.0"
+config-version: 2
+
+profile: "opensnow_demo"
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  opensnow_telecom_demo:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+
+# Sample profile -- copy to ~/.dbt/profiles.yml or use --profiles-dir .
+# opensnow_demo:
+#   target: dev
+#   outputs:
+#     dev:
+#       type: opensnow
+#       host: localhost
+#       port: 5433
+#       user: opensnow
+#       password: ""
+#       dbname: opensnow
+#       schema: public
+#       threads: 4

@@ -1,0 +1,20 @@
+[package]
+name = "opensnow-queue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Redis-backed job queue for OpenSnow worker pool"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+anyhow.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+chrono.workspace = true
+
+# Redis client — pure async, no C deps
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+axum.workspace = true
+opensnow-core.workspace = true

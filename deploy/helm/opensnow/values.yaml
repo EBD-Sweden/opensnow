@@ -1,0 +1,440 @@
+## OpenSnow Helm Chart - Production Values
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: opensnow/opensnow
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+## Pod- and container-level security hardening applied to all OpenSnow
+## workloads (coordinator, worker, mcp). The container image runs as uid/gid
+## 1000 (non-root); these defaults enforce that and drop all capabilities.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+
+## -------------------------------------------------------------------
+## Enterprise / BYOC / Marketplace deployment gates
+## -------------------------------------------------------------------
+enterprise:
+  # test-instance keeps local/dev rendering possible. Set to enterprise or
+  # aws-marketplace only with customer-owned infra, external secrets, TLS,
+  # audit export, IdP, and entitlement values below populated.
+  mode: "test-instance"
+  requireExternalSecrets: true
+  customerOwnedInfrastructure: true
+  accountIdentity:
+    accountId: ""
+    organizationId: ""
+    workspaceId: ""
+  marketplace:
+    enabled: false
+    provider: ""
+    productCode: ""
+    customerIdentifier: ""
+    entitlementId: ""
+  entitlements:
+    required: false
+    activationFeature: "account.activate"
+    warehouseFeature: "warehouse.activate"
+    warehouseLimit: 0
+  oidc:
+    enabled: false
+    issuer: ""
+    clientId: ""
+    existingSecret: ""
+    clientSecretKey: client-secret
+  jwt:
+    # Enterprise product-token issuer. test-instance/local may keep local_hs256
+    # with OPENSNOW_JWT_SECRET; enterprise/BYOC must use RS256 or ES256.
+    mode: "local_hs256"
+    issuer: ""
+    audience: ""
+    algorithm: "RS256"
+    kid: ""
+    existingSecret: ""
+    privateKeyKey: private-key.pem
+    publicKeyKey: public-key.pem
+    jwkNKey: jwk-n
+    jwkEKey: jwk-e
+    jwkXKey: jwk-x
+    jwkYKey: jwk-y
+    verificationKeysJsonKey: verification-keys.json
+    revokedKids: ""
+  saml:
+    enabled: false
+    metadataUrl: ""
+    existingSecret: ""
+  scim:
+    enabled: false
+    baseUrl: ""
+    tokenExistingSecret: ""
+    tokenSecretKey: scim-token
+  auditExport:
+    enabled: false
+    bucket: ""
+    prefix: "opensnow/audit/"
+    kmsKeyArn: ""
+  sealedSecrets:
+    enabled: false
+    # Enterprise values: aws-secrets-manager, gcp-secret-manager, or vault.
+    # test-instance/local may leave empty and use local-dev sealed store only.
+    provider: ""
+    # AWS KMS key ARN / GCP KMS key name / Vault transit key reference.
+    kmsKeyArn: ""
+    controllerNamespace: "sealed-secrets"
+  tls:
+    enabled: false
+    existingSecret: ""
+    issuerRef: ""
+
+## -------------------------------------------------------------------
+## Coordinator
+## -------------------------------------------------------------------
+coordinator:
+  replicas: 2
+  ports:
+    http: 8080
+    postgres: 5433
+    grpc: 9100
+  # Disabled by default until pgwire has auth/tenant policy enforcement.
+  pgwireEnabled: false
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  extraEnv: []
+
+## -------------------------------------------------------------------
+## Workers
+## -------------------------------------------------------------------
+worker:
+  replicas: 3
+  ports:
+    grpc: 9092
+
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "8"
+      memory: 16Gi
+
+  cache:
+    enabled: true
+    storageClass: ""
+    size: 100Gi
+    mountPath: /data/cache
+
+  autoscaling:
+    enabled: false
+    # When using KEDA, set this to false and deploy keda-scaledobject.yaml separately
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+  livenessProbe:
+    grpc:
+      port: 9092
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    grpc:
+      port: 9092
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  extraEnv: []
+
+## -------------------------------------------------------------------
+## Metadata (built-in PostgreSQL)
+## -------------------------------------------------------------------
+metadata:
+  ## Use the built-in PostgreSQL StatefulSet
+  external:
+    enabled: false
+    host: ""
+    port: 5432
+    database: opensnow
+    username: opensnow
+    existingSecret: ""
+    secretKey: password
+
+  builtin:
+    enabled: true
+    image:
+      repository: postgres
+      tag: "16-alpine"
+      pullPolicy: IfNotPresent
+
+    port: 5432
+    database: opensnow
+    username: opensnow
+    # Optional override for the built-in metadata Postgres password.
+    # Leave empty to reuse the existing release Secret, or generate unique
+    # per-install material with Helm randAlphaNum on first install.
+    # Hosted/cloud deployments should prefer metadata.external.existingSecret
+    # or a sealed/external Secret managed outside Git.
+    password: ""
+
+    storage:
+      storageClass: ""
+      size: 20Gi
+
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
+## -------------------------------------------------------------------
+## Gateway (external-facing service)
+## -------------------------------------------------------------------
+gateway:
+  type: ClusterIP
+  port: 8080
+  postgresPort: 5433
+  annotations: {}
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+
+## -------------------------------------------------------------------
+## Configuration (opensnow.toml)
+## -------------------------------------------------------------------
+config:
+  warehouse:
+    name: "default"
+    max_concurrent_queries: 64
+    query_timeout_seconds: 300
+
+  storage:
+    type: "s3"
+    bucket: "opensnow-data"
+    endpoint: ""
+    region: "us-east-1"
+    allowInsecureHttp: false
+    # Prefer cloud workload identity (IRSA/Workload Identity/Managed Identity)
+    # or an existing Secret. Inline values are accepted only for local MinIO demos
+    # and are rendered to a Kubernetes Secret, never to opensnow.toml.
+    access_key: ""
+    secret_key: ""
+    existingSecret: ""
+    accessKeySecretKey: access-key
+    secretKeySecretKey: secret-key
+
+  catalog:
+    type: "postgres"
+
+  cache:
+    enabled: true
+    max_size_bytes: 107374182400  # 100 GiB
+    eviction_policy: "lru"
+
+## -------------------------------------------------------------------
+## MCP Server (agent-native Model Context Protocol)
+## -------------------------------------------------------------------
+mcp:
+  enabled: true
+  replicas: 1
+  port: 8090
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+  service:
+    type: ClusterIP
+    port: 8090
+
+  livenessProbe:
+    tcpSocket:
+      port: mcp
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    tcpSocket:
+      port: mcp
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  extraEnv: []
+
+## -------------------------------------------------------------------
+## Optional Bitnami PostgreSQL dependency
+## -------------------------------------------------------------------
+postgresql:
+  # Disabled by default. OpenSnow uses metadata.builtin for local/dev and
+  # metadata.external for BYOC; enabling this dependency is an explicit escape hatch.
+  enabled: false
+
+## -------------------------------------------------------------------
+## Redis (job queue + warm pool)
+## -------------------------------------------------------------------
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+    password: ""
+    existingSecret: ""
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: "100m"
+        memory: 128Mi
+      limits:
+        cpu: "500m"
+        memory: 512Mi
+
+## -------------------------------------------------------------------
+## KEDA (warm-pool autoscaling for workers)
+## -------------------------------------------------------------------
+keda:
+  enabled: false
+  pollingInterval: 15
+  cooldownPeriod: 300
+  idleReplicaCount: 2
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  prometheus:
+    serverAddress: "http://prometheus-server.monitoring.svc.cluster.local:9090"
+    pendingQueriesThreshold: "10"
+    cpuThreshold: "0.7"
+  redis:
+    listName: "opensnow:queue:default"
+    listLength: "1"
+
+## -------------------------------------------------------------------
+## MinIO (local object storage, typically for dev)
+## -------------------------------------------------------------------
+minio:
+  enabled: false
+  mode: standalone
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 50Gi
+  resources:
+    requests:
+      cpu: "250m"
+      memory: 512Mi
+  # DEV ONLY. MinIO is disabled by default (enabled: false). These placeholder
+  # credentials exist solely so a local/dev render works out of the box. For any
+  # shared or production deployment, point at external object storage or supply
+  # MinIO credentials from a Kubernetes Secret (auth.existingSecret) — never use
+  # these values.
+  rootUser: "OPEN-SNOW-DEV-USER"
+  rootPassword: "CHANGE-ME-DEV-ONLY"
+  buckets:
+    - name: opensnow-data
+      policy: none
+      purge: false
+
+## -------------------------------------------------------------------
+## Network Policies
+## -------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+
+## -------------------------------------------------------------------
+## Monitoring
+## -------------------------------------------------------------------
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    namespace: ""

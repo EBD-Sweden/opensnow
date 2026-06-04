@@ -1,0 +1,69 @@
+services:
+  opensnow:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      RUST_LOG: info
+      HOME: /home/opensnow
+      # The container must bind 0.0.0.0 to receive the forwarded port; the host
+      # only publishes it on 127.0.0.1 (see ports above). OPENSNOW_ALLOW_PUBLIC
+      # explicitly accepts an unauthenticated listener for this local demo.
+      OPENSNOW_SERVER_HOST: "0.0.0.0"
+      OPENSNOW_ALLOW_PUBLIC: "1"
+    volumes:
+      - opensnow-home:/home/opensnow/.opensnow
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${OPENSNOW_DEMO_MINIO_ROOT_USER:-OPEN-SNOW-DEMO-USER}
+      MINIO_ROOT_PASSWORD: ${OPENSNOW_DEMO_PASSWORD:-OPEN-SNOW-DEMO-ONLY}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    depends_on:
+      - opensnow
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${OPENSNOW_DEMO_PASSWORD:-OPEN-SNOW-DEMO-ONLY}
+    volumes:
+      - ./deploy/grafana/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./deploy/grafana/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/dashboard-provider.yml
+      - ./deploy/grafana/opensnow-dashboard.json:/var/lib/grafana/dashboards/opensnow-dashboard.json
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  opensnow-home:
+  minio-data:
+  prometheus-data:
+  grafana-data:
