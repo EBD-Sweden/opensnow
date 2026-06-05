@@ -1,5 +1,21 @@
 version: 2
 sources:
+  # Second data source: European Central Bank (ECB Data Portal) — the real
+  # banking data (card payments, ATM, consumer credit, rates) Eurostat lacks.
+  - name: ecb_raw
+    schema: public
+    description: Raw ECB Data Portal datasets (PSS payments, BSI balance sheet, MIR rates).
+    tables:
+      - name: ecb_cards
+        description: ECB payment statistics — credit/debit card payments + ATM cash withdrawals, annual.
+        meta: { label: "ECB · Card payments & ATM" }
+      - name: ecb_bsi
+        description: ECB MFI balance sheet — household consumer credit, mortgages, deposits (EUR mn).
+        meta: { label: "ECB · Household credit & deposits" }
+      - name: ecb_mir
+        description: ECB MFI interest rates on new household consumer credit & mortgages (% p.a.).
+        meta: { label: "ECB · Loan interest rates" }
+
   - name: eurostat_raw
     schema: public
     description: Raw Eurostat datasets loaded into OpenSnow as-is (SDMX codes preserved).

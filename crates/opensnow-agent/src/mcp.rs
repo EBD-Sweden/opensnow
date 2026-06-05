@@ -257,6 +257,38 @@ impl McpServer {
                             "interval_secs": { "type": "integer", "description": "Fixed interval in seconds" }
                         }
                     }
+                },
+                {
+                    "name": "dashboard_list",
+                    "description": "List existing Metabase dashboards with their public URLs.",
+                    "inputSchema": { "type": "object", "properties": {} }
+                },
+                {
+                    "name": "dashboard_create",
+                    "description": "Create a published Metabase dashboard from native-SQL cards (over the Postgres serving DB). Returns the public URL. Each card: {title, sql, display(bar|line|table|scatter), dimensions[], metrics[], stacked?}.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Dashboard name" },
+                            "description": { "type": "string" },
+                            "cards": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": { "type": "string" },
+                                        "sql": { "type": "string", "description": "Native SQL over the serving DB (schema eurostat)" },
+                                        "display": { "type": "string", "enum": ["bar", "line", "table", "scatter", "pie", "row"] },
+                                        "dimensions": { "type": "array", "items": { "type": "string" } },
+                                        "metrics": { "type": "array", "items": { "type": "string" } },
+                                        "stacked": { "type": "boolean" }
+                                    },
+                                    "required": ["title", "sql"]
+                                }
+                            }
+                        },
+                        "required": ["name", "cards"]
+                    }
                 }
             ]
         }))
@@ -394,7 +426,8 @@ impl McpServer {
             // ── Analytics + platform tools routed through AgentRuntime ─────
             "schema_introspect" | "query_history" | "migration_planner" | "refactor_test"
             | "dbt_list_models" | "dbt_get_model" | "dbt_write_model" | "dbt_delete_model"
-            | "pipeline_run" | "pipeline_status" | "schedule_get" | "schedule_set" => {
+            | "pipeline_run" | "pipeline_status" | "schedule_get" | "schedule_set"
+            | "dashboard_list" | "dashboard_create" => {
                 let mut ctx = AgentContext::new(Arc::clone(&self.engine), "default", None);
                 let runtime = build_runtime();
 

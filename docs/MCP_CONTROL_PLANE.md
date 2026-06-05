@@ -22,8 +22,13 @@ Both read the dbt project at `OPENSNOW_DBT_PROJECT_DIR`.
 | `pipeline_run` `{select?}` | Build models in dependency order (dbt run) |
 | `pipeline_status` | DAG + last-run status from dbt artifacts |
 | `schedule_get` / `schedule_set` `{cron?\|interval_secs?}` | Read/update the schedule |
+| `dashboard_list` | List Metabase dashboards + public URLs |
+| `dashboard_create` `{name, cards:[{title, sql, display, dimensions, metrics}]}` | Build & publish a Metabase dashboard, returns public URL |
 | `query`, `list_tables`, `describe_table`, `create_table` | Data access |
 | `schema_introspect`, `query_history`, `migration_planner`, `refactor_test` | Schema-refactor agent tools |
+
+The dashboard tools need Metabase credentials in the environment:
+`METABASE_URL` (default `https://metabase.ebdsweden.com`), `MB_USER`, `MB_PASSWORD`.
 
 ## Connect Claude (MCP)
 
@@ -62,9 +67,6 @@ opensnow agent schedule_set '{"cron":"0 6 * * *"}'
 
 ## Notes / not yet done
 
-- **Dashboards** are not yet a tool — creating Metabase dashboards needs an HTTP
-  client + Metabase credentials. Today that's the `deploy/demo/metabase-*.py`
-  scripts; a `dashboard_create` tool is the next addition.
 - `pipeline_run` shells out to `dbt`, which must be on `PATH` or set via
   `OPENSNOW_DBT_EXECUTABLE`.
 - `schedule_set` writes `opensnow_schedule.json`; the running server still reads

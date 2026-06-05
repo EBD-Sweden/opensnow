@@ -7,8 +7,8 @@ use crate::agent_tools::{
 };
 use crate::harness::{AgentContext, AgentRuntime, AgentTask};
 use crate::platform_tools::{
-    DbtDeleteModelTool, DbtGetModelTool, DbtListModelsTool, DbtWriteModelTool, PipelineRunTool,
-    PipelineStatusTool, ScheduleGetTool, ScheduleSetTool,
+    DashboardCreateTool, DashboardListTool, DbtDeleteModelTool, DbtGetModelTool, DbtListModelsTool,
+    DbtWriteModelTool, PipelineRunTool, PipelineStatusTool, ScheduleGetTool, ScheduleSetTool,
 };
 use crate::schema_refactor_task::AnalyticsSchemaRefactorTask;
 
@@ -31,6 +31,8 @@ pub fn build_runtime() -> AgentRuntime {
     rt.register_tool(PipelineStatusTool);
     rt.register_tool(ScheduleGetTool);
     rt.register_tool(ScheduleSetTool);
+    rt.register_tool(DashboardListTool);
+    rt.register_tool(DashboardCreateTool);
     rt
 }
 

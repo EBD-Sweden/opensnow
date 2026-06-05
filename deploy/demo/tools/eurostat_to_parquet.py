@@ -18,10 +18,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# A representative EU set (core + Nordics + EU/EA aggregates) — keeps Parquet small.
+# All EU27 + EFTA + EU/EA aggregates — full country coverage.
 COUNTRIES = {
-    "SE", "DE", "FR", "ES", "NL", "IT", "FI", "DK", "PL", "AT", "BE", "IE",
-    "PT", "NO", "EA20", "EA19", "EU27_2020",
+    "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "EL", "GR",
+    "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI",
+    "ES", "SE", "NO", "IS", "CH", "UK", "EA20", "EA19", "EU27_2020",
 }
 DEFAULT_MIN_YEAR = 2010
 

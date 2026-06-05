@@ -357,3 +357,220 @@ impl Tool for ScheduleSetTool {
         }))
     }
 }
+
+// ── dashboard tools (Metabase) ─────────────────────────────────────────────
+
+fn mb_base() -> String {
+    std::env::var("METABASE_URL")
+        .unwrap_or_else(|_| "https://metabase.ebdsweden.com".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn mb_creds() -> Result<(String, String)> {
+    let user = std::env::var("MB_USER")
+        .or_else(|_| std::env::var("METABASE_USER"))
+        .map_err(|_| anyhow!("set MB_USER (Metabase admin email)"))?;
+    let pw = std::env::var("MB_PASSWORD")
+        .or_else(|_| std::env::var("METABASE_PASSWORD"))
+        .map_err(|_| anyhow!("set MB_PASSWORD (Metabase admin password)"))?;
+    Ok((user, pw))
+}
+
+/// One Metabase REST call. Returns parsed JSON, or an error carrying the body.
+fn mb_call(method: &str, url: &str, session: Option<&str>, body: Option<Value>) -> Result<Value> {
+    let mut req = ureq::request(method, url).set("Content-Type", "application/json");
+    if let Some(s) = session {
+        req = req.set("X-Metabase-Session", s);
+    }
+    let resp = match body {
+        Some(b) => req.send_json(b),
+        None => req.call(),
+    };
+    match resp {
+        Ok(r) => Ok(r.into_json::<Value>().unwrap_or_else(|_| json!({}))),
+        Err(ureq::Error::Status(code, r)) => {
+            let txt = r.into_string().unwrap_or_default();
+            Err(anyhow!(
+                "metabase {method} -> {code}: {}",
+                &txt[..txt.len().min(300)]
+            ))
+        }
+        Err(e) => Err(anyhow!("metabase request failed: {e}")),
+    }
+}
+
+fn mb_login() -> Result<(String, String)> {
+    let base = mb_base();
+    let (u, p) = mb_creds()?;
+    let r = mb_call(
+        "POST",
+        &format!("{base}/api/session"),
+        None,
+        Some(json!({ "username": u, "password": p })),
+    )?;
+    let sid = r
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("metabase login failed (check MB_USER/MB_PASSWORD)"))?
+        .to_string();
+    Ok((base, sid))
+}
+
+/// List existing Metabase dashboards (with public URLs where shared).
+pub struct DashboardListTool;
+
+#[async_trait::async_trait(?Send)]
+impl Tool for DashboardListTool {
+    fn name(&self) -> &'static str {
+        "dashboard_list"
+    }
+    async fn invoke(&self, _ctx: &mut AgentContext, _params: Value) -> Result<Value> {
+        let (base, sid) = mb_login()?;
+        let list = mb_call("GET", &format!("{base}/api/dashboard"), Some(&sid), None)?;
+        let arr = list.as_array().cloned().unwrap_or_default();
+        let out: Vec<Value> = arr
+            .iter()
+            .filter(|d| d.get("archived").and_then(Value::as_bool) != Some(true))
+            .map(|d| {
+                json!({
+                    "id": d.get("id"),
+                    "name": d.get("name"),
+                    "public_url": d.get("public_uuid").and_then(Value::as_str)
+                        .map(|u| format!("{base}/public/dashboard/{u}")),
+                })
+            })
+            .collect();
+        Ok(json!({ "count": out.len(), "dashboards": out }))
+    }
+}
+
+/// Create a published Metabase dashboard from native-SQL card specs.
+///
+/// Params: `{ name, description?, cards: [{ title, sql, display?, dimensions?,
+/// metrics?, stacked? }] }`. SQL runs against the Postgres serving DB. Returns
+/// the public dashboard URL.
+pub struct DashboardCreateTool;
+
+#[async_trait::async_trait(?Send)]
+impl Tool for DashboardCreateTool {
+    fn name(&self) -> &'static str {
+        "dashboard_create"
+    }
+    async fn invoke(&self, _ctx: &mut AgentContext, params: Value) -> Result<Value> {
+        let name = str_param(&params, "name")?;
+        let cards = params
+            .get("cards")
+            .and_then(Value::as_array)
+            .filter(|c| !c.is_empty())
+            .ok_or_else(|| anyhow!("'cards' must be a non-empty array of {{title, sql}}"))?;
+        let (base, sid) = mb_login()?;
+
+        // Public sharing must be on for the public link to resolve.
+        let _ = mb_call(
+            "PUT",
+            &format!("{base}/api/setting/enable-public-sharing"),
+            Some(&sid),
+            Some(json!({ "value": true })),
+        );
+
+        let dbs = mb_call("GET", &format!("{base}/api/database"), Some(&sid), None)?;
+        let db_list = dbs
+            .get("data")
+            .and_then(Value::as_array)
+            .cloned()
+            .or_else(|| dbs.as_array().cloned())
+            .unwrap_or_default();
+        let db_id = db_list
+            .iter()
+            .find(|d| d.get("engine").and_then(Value::as_str) == Some("postgres"))
+            .and_then(|d| d.get("id"))
+            .cloned()
+            .ok_or_else(|| anyhow!("no Postgres database connected in Metabase"))?;
+
+        let mut card_ids = Vec::new();
+        for c in cards {
+            let title = c
+                .get("title")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("each card needs a 'title'"))?;
+            let sql = c
+                .get("sql")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("each card needs a 'sql'"))?;
+            let display = c.get("display").and_then(Value::as_str).unwrap_or("table");
+            let mut vs = json!({});
+            if let Some(d) = c.get("dimensions") {
+                vs["graph.dimensions"] = d.clone();
+            }
+            if let Some(m) = c.get("metrics") {
+                vs["graph.metrics"] = m.clone();
+            }
+            if c.get("stacked").and_then(Value::as_bool) == Some(true) {
+                vs["stackable.stack_type"] = json!("stacked");
+            }
+            let created = mb_call(
+                "POST",
+                &format!("{base}/api/card"),
+                Some(&sid),
+                Some(json!({
+                    "name": title,
+                    "dataset_query": {"type": "native", "native": {"query": sql}, "database": db_id},
+                    "display": display,
+                    "visualization_settings": vs,
+                })),
+            )?;
+            card_ids.push(created.get("id").cloned().unwrap_or(Value::Null));
+        }
+
+        let dash = mb_call(
+            "POST",
+            &format!("{base}/api/dashboard"),
+            Some(&sid),
+            Some(json!({
+                "name": name,
+                "description": params.get("description").and_then(Value::as_str)
+                    .unwrap_or("Created via the OpenSnow control plane."),
+            })),
+        )?;
+        let did = dash
+            .get("id")
+            .cloned()
+            .ok_or_else(|| anyhow!("dashboard creation failed"))?;
+
+        let positions = [(0, 0), (12, 0), (0, 8), (12, 8), (0, 16), (12, 16)];
+        let dashcards: Vec<Value> = card_ids
+            .iter()
+            .enumerate()
+            .map(|(i, cid)| {
+                let (col, row) = positions[i % positions.len()];
+                json!({ "id": -(i as i64 + 1), "card_id": cid, "col": col, "row": row, "size_x": 12, "size_y": 8 })
+            })
+            .collect();
+        mb_call(
+            "PUT",
+            &format!("{base}/api/dashboard/{did}/cards"),
+            Some(&sid),
+            Some(json!({ "cards": dashcards })),
+        )?;
+
+        let pub_link = mb_call(
+            "POST",
+            &format!("{base}/api/dashboard/{did}/public_link"),
+            Some(&sid),
+            Some(json!({})),
+        )?;
+        let uuid = pub_link
+            .get("uuid")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("could not enable public link"))?;
+
+        Ok(json!({
+            "status": "created",
+            "name": name,
+            "dashboard_id": did,
+            "cards": card_ids.len(),
+            "public_url": format!("{base}/public/dashboard/{uuid}"),
+        }))
+    }
+}

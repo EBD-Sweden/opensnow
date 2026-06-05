@@ -80,3 +80,23 @@ models:
   - name: mart_competitiveness
     description: Unit labour cost vs real/nominal effective exchange rate.
     meta: { label: Competitiveness }
+
+  # staging + marts — ECB banking
+  - name: stg_ecb_cards
+    description: ECB card payments + ATM withdrawals (annual).
+    meta: { label: "ECB cards — cleaned" }
+  - name: stg_ecb_bsi
+    description: ECB household credit & deposits (EUR mn).
+    meta: { label: "ECB balance sheet — cleaned" }
+  - name: stg_ecb_mir
+    description: ECB household loan interest rates.
+    meta: { label: "ECB rates — cleaned" }
+  - name: mart_card_payments
+    description: Credit vs debit card payments + ATM cash withdrawals, with average ticket size.
+    meta: { label: "Card payments & ATM (ECB)" }
+  - name: mart_consumer_credit
+    description: Household consumer credit & mortgages — stocks, rates, and the rate spread.
+    meta: { label: "Consumer credit & mortgages (ECB)" }
+  - name: mart_banking_per_capita
+    description: Per-person savings, debt and card spend (ECB ÷ population) — household behavior.
+    meta: { label: "Banking per capita" }

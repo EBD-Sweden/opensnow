@@ -334,7 +334,16 @@ var FRIENDLY = {                  // fallback labels if dbt descriptions are abs
   stg_ulc:              { label: "Unit labour costs — cleaned", desc: "ULC index 2015=100." },
   stg_exch_rates:       { label: "Exchange rates — cleaned", desc: "REER/NEER indices." },
   mart_sovereign_risk:  { label: "Sovereign risk", desc: "Debt-to-GDP, deficit, 10y bond yield." },
-  mart_competitiveness: { label: "Competitiveness", desc: "Unit labour cost vs effective exchange rate." }
+  mart_competitiveness: { label: "Competitiveness", desc: "Unit labour cost vs effective exchange rate." },
+  ecb_cards:            { label: "ECB · Card payments & ATM", desc: "Credit/debit card payments + ATM withdrawals." },
+  ecb_bsi:              { label: "ECB · Household credit & deposits", desc: "Consumer credit, mortgages, deposits (EUR mn)." },
+  ecb_mir:              { label: "ECB · Loan interest rates", desc: "Consumer-credit & mortgage rates." },
+  stg_ecb_cards:        { label: "ECB cards — cleaned", desc: "Card payments + ATM, annual." },
+  stg_ecb_bsi:          { label: "ECB balance sheet — cleaned", desc: "Household credit & deposits." },
+  stg_ecb_mir:          { label: "ECB rates — cleaned", desc: "Household loan rates." },
+  mart_card_payments:   { label: "Card payments & ATM (ECB)", desc: "Credit vs debit cards + ATM, avg ticket." },
+  mart_consumer_credit: { label: "Consumer credit & mortgages (ECB)", desc: "Household credit stocks, rates, spread." },
+  mart_banking_per_capita: { label: "Banking per capita", desc: "Savings, debt & card spend per person." }
 };
 function meta(code) {
   var n = PIPELINE && (PIPELINE.nodes||[]).find(function(x){return x.name===code;});
@@ -575,6 +584,9 @@ var DASHBOARDS = [
   { name: "Rates & Housing",             url: "https://metabase.ebdsweden.com/public/dashboard/021ef534-67e4-4462-bc96-adab6e8ace00" },
   { name: "Sovereign Risk",              url: "https://metabase.ebdsweden.com/public/dashboard/9cb54c4d-74a6-4b34-8749-d8db6f62dbd1" },
   { name: "Competitiveness",             url: "https://metabase.ebdsweden.com/public/dashboard/86363897-33ee-4c5b-89cb-68479d03a73c" },
+  { name: "Card Payments & Consumer Credit (ECB)", url: "https://metabase.ebdsweden.com/public/dashboard/35875e70-4552-4d18-9cd2-2c4727c9a947" },
+  { name: "European Savings — Per Person",   url: "https://metabase.ebdsweden.com/public/dashboard/442c98aa-2040-481c-8813-8381af6ba48e" },
+  { name: "European Credit & Cards — Per Person", url: "https://metabase.ebdsweden.com/public/dashboard/6a4f8e0a-c1e4-4359-a79a-e2b66e63439e" },
   { name: "Housing & Growth (overview)", url: "https://metabase.ebdsweden.com/public/dashboard/b132a0da-e387-4d99-b25f-28155b8dec09" }
 ];
 async function loadDashboards(){
