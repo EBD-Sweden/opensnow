@@ -56,7 +56,21 @@ OpenSnow is now live at `https://opensnow.ebdsweden.com` (console + `/pipeline`)
 
 ## 4. Metabase first-run + public embedding (one time)
 
-Open `https://metabase.ebdsweden.com`:
+Fast path: let the included setup script create the Metabase admin user,
+Postgres connection, cards, dashboard, and public sharing link:
+
+```bash
+export MB_URL=https://metabase.ebdsweden.com
+export MB_EMAIL=admin@example.com
+export MB_PASSWORD=$(openssl rand -hex 24)
+export PG_PASSWORD="$OPENSNOW_DEMO_PG_PASSWORD"
+python3 metabase-setup.py | tee metabase-setup.out
+
+export OPENSNOW_DASHBOARD_URL=$(awk -F= '/^PUBLIC_DASHBOARD_URL=/{print $2}' metabase-setup.out)
+docker compose up -d opensnow
+```
+
+Manual path: open `https://metabase.ebdsweden.com`:
 
 1. Create the admin account.
 2. Add a database → **PostgreSQL**: host `postgres`, port `5432`, db `eurostat`,
@@ -64,9 +78,8 @@ Open `https://metabase.ebdsweden.com`:
 3. Build a dashboard over the `eurostat.mart_*` tables (or import one).
 4. **Admin → Settings → Public Sharing → Enable.** Open the dashboard →
    Sharing → **Public link** → copy the `.../public/dashboard/<uuid>` URL.
-5. Put that URL in the EBD site iframe (see `website/index.html`,
-   `data-embed-dashboard`) and in `OPENSNOW_DASHBOARD_URL` so the pipeline page's
-   "Open dashboard" button points to it:
+5. Put that URL in `OPENSNOW_DASHBOARD_URL` so the OpenSnow Dashboards tab and
+   "Open dashboard" button point to it:
    ```bash
    # redeploy opensnow with the dashboard link
    OPENSNOW_DASHBOARD_URL="https://metabase.ebdsweden.com/public/dashboard/<uuid>#bordered=false&titled=false" \
@@ -90,4 +103,5 @@ normalized Parquet into `sample-data/` and add them to `dbt/models/staging/sourc
 - `Caddyfile` — TLS + routing + public endpoint allowlist
 - `opensnow.demo.toml` — public-demo OpenSnow config
 - `seed.Dockerfile` / `seed.sh` — one-time dbt build + Postgres export
+- `metabase-setup.py` — optional one-time Metabase dashboard/public-link setup
 - `dbt/` — the demo dbt project; `sample-data/` — bundled Eurostat Parquet

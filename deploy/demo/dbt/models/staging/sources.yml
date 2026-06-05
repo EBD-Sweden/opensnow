@@ -2,6 +2,17 @@ version: 2
 sources:
   - name: eurostat_raw
     schema: public
+    description: Raw Eurostat datasets loaded into OpenSnow as-is (SDMX codes preserved).
     tables:
       - name: prc_hpi_q
+        description: >
+          Eurostat House Price Index, quarterly. Residential property prices,
+          index 2015=100, by country, unit and type of purchase.
+        meta:
+          label: House Price Index (quarterly)
       - name: naidq_10_gdp
+        description: >
+          Eurostat quarterly national accounts — GDP and main aggregates
+          (output, expenditure and income approach), by country.
+        meta:
+          label: GDP & national accounts (quarterly)

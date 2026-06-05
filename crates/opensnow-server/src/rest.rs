@@ -24,7 +24,7 @@ use crate::tenant::{TenantId, tenant_middleware};
 /// `EngineHandle` is Send + Sync — safe to use as axum Router state.
 pub type AppState = EngineHandle;
 
-const QUERY_UI: &str = include_str!("../static/index.html");
+pub(crate) const APP_UI: &str = include_str!("../static/app.html");
 const DEPLOYMENT_DOC: &str = include_str!("../../../docs/DEPLOYMENT.md");
 const SQL_COMPATIBILITY_DOC_BODY: &str = include_str!("../../../docs/SQL_COMPATIBILITY.md");
 const PUBLIC_TEST_PATH_DOC: &str = include_str!("../../../docs/PUBLIC_TEST_PATH.md");
@@ -205,8 +205,19 @@ pub fn create_router_with_auth_and_buffer(
         .layer(axum::middleware::from_fn(tenant_middleware))
 }
 
-async fn query_ui() -> Html<&'static str> {
-    Html(QUERY_UI)
+async fn query_ui() -> Html<String> {
+    ui_asset("app.html", APP_UI)
+}
+
+/// Serve a UI asset from `OPENSNOW_UI_DIR` when set (so HTML can be hot-swapped
+/// via a mounted volume without rebuilding the image), else the embedded copy.
+pub(crate) fn ui_asset(file: &str, embedded: &'static str) -> Html<String> {
+    if let Ok(dir) = std::env::var("OPENSNOW_UI_DIR") {
+        if let Ok(body) = std::fs::read_to_string(std::path::Path::new(&dir).join(file)) {
+            return Html(body);
+        }
+    }
+    Html(embedded.to_string())
 }
 
 fn markdown_response(body: &'static str) -> Response {

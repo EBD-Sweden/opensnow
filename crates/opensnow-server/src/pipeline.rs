@@ -30,8 +30,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
-const PIPELINE_UI: &str = include_str!("../static/pipeline.html");
-
 #[derive(Clone, Default, serde::Serialize)]
 struct RunState {
     running: bool,
@@ -75,8 +73,9 @@ pub fn build() -> PipelineRouters {
     PipelineRouters { public, admin }
 }
 
-async fn pipeline_ui() -> Html<&'static str> {
-    Html(PIPELINE_UI)
+async fn pipeline_ui() -> Html<String> {
+    // The pipeline lives inside the unified workspace SPA (opens on the Pipelines tab).
+    crate::rest::ui_asset("app.html", crate::rest::APP_UI)
 }
 
 // ── config ───────────────────────────────────────────────────────────────────
@@ -297,6 +296,8 @@ async fn pipeline_data(State(state): State<PipelineState>) -> Json<Value> {
             nodes.push(json!({
                 "id": id,
                 "name": src.get("name").and_then(Value::as_str).unwrap_or(id),
+                "label": src.get("meta").and_then(|m| m.get("label")).and_then(Value::as_str),
+                "description": src.get("description").and_then(Value::as_str).filter(|s| !s.is_empty()),
                 "layer": "source",
                 "depends_on": [],
                 "status": "source",
@@ -330,6 +331,8 @@ async fn pipeline_data(State(state): State<PipelineState>) -> Json<Value> {
             nodes.push(json!({
                 "id": id,
                 "name": name,
+                "label": node.get("meta").and_then(|m| m.get("label")).and_then(Value::as_str),
+                "description": node.get("description").and_then(Value::as_str).filter(|s| !s.is_empty()),
                 "layer": layer_for(name),
                 "depends_on": depends_on,
                 "status": status,

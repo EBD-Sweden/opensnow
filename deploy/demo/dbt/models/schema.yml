@@ -1,0 +1,26 @@
+version: 2
+models:
+  - name: stg_house_prices
+    description: Cleaned, typed house-price observations (nulls dropped).
+    meta:
+      label: House prices — cleaned
+  - name: stg_gdp
+    description: Cleaned, typed GDP observations (nulls dropped).
+    meta:
+      label: GDP — cleaned
+  - name: mart_house_price_index
+    description: House Price Index per country per quarter (2015=100), analytics-ready.
+    meta:
+      label: House Price Index over time
+  - name: mart_house_price_yoy
+    description: Year-on-year % change in the house price index, per country per quarter.
+    meta:
+      label: House Price YoY %
+  - name: mart_house_price_latest
+    description: The most recent House Price Index value per country.
+    meta:
+      label: Latest House Price Index
+  - name: mart_gdp_growth_qoq
+    description: Quarter-on-quarter real GDP growth %, per country per quarter.
+    meta:
+      label: GDP Growth QoQ %

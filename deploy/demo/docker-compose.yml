@@ -27,15 +27,35 @@ services:
       # HTTP surface stays on the safe demo SQL gate.
       OPENSNOW_TRUSTED_SQL: "1"
       OPENSNOW_DBT_ARTIFACTS_DIR: /data/dbt-target
-      OPENSNOW_DASHBOARD_URL: ${OPENSNOW_DASHBOARD_URL:-/metabase}
+      # Defaults to the Metabase subdomain; set to the full /public/dashboard/<uuid>
+      # URL once the public dashboard exists so the link lands on the dashboard.
+      OPENSNOW_DASHBOARD_URL: ${OPENSNOW_DASHBOARD_URL:-https://${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}}
       OPENSNOW_DASHBOARD_NAME: "Eurostat — EU Housing & Growth"
       OPENSNOW_QUERY_TIMEOUT_SECS: "20"
+      # Serve the UI from disk so HTML can be hot-swapped without an image rebuild.
+      OPENSNOW_UI_DIR: /ui
     volumes:
       - ./opensnow.demo.toml:/etc/opensnow/opensnow.toml:ro
-      # Sample data auto-registers as tables (warehouse public dir).
-      - ./sample-data:/data/warehouse/opensnow/public:ro
+      - ../../crates/opensnow-server/static:/ui:ro
       - opensnow-data:/data
     expose: ["8080"]            # internal only — Caddy proxies it
+    networks: [demo]
+    depends_on:
+      init-data:
+        condition: service_completed_successfully
+
+  # One-shot: seed the sample Parquet into the (writable) warehouse volume and
+  # fix ownership to the image's uid 1000 so OpenSnow can write catalog + marts.
+  init-data:
+    image: busybox:stable
+    user: root
+    command:
+      - sh
+      - -c
+      - "mkdir -p /data/warehouse/opensnow/public && cp -n /sample/*.parquet /data/warehouse/opensnow/public/ 2>/dev/null; chown -R 1000:1000 /data"
+    volumes:
+      - opensnow-data:/data
+      - ./sample-data:/sample:ro
     networks: [demo]
 
   postgres:
@@ -56,6 +76,9 @@ services:
       # Metabase on its own subdomain (root path) — robust + clean iframe URLs.
       MB_SITE_URL: https://${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}
       MB_JETTY_PORT: "3000"
+      # Persist the app DB (H2) in the volume — without this it lives in the
+      # container and is lost on recreate (dashboard + public links gone).
+      MB_DB_FILE: /metabase-data/metabase.db
     volumes: [metabase-data:/metabase-data]
     expose: ["3000"]
     networks: [demo]

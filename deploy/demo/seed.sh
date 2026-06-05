@@ -20,7 +20,9 @@ echo
 
 echo "==> dbt run (build staging + marts in OpenSnow, in dependency order)"
 cd /work/dbt
-DBT_PROFILES_DIR=/work/dbt dbt run --no-partial-parse
+# Write artifacts to the shared volume so the OpenSnow container's /pipeline view
+# (OPENSNOW_DBT_ARTIFACTS_DIR=/data/dbt-target) can read manifest + run_results.
+DBT_PROFILES_DIR=/work/dbt dbt run --no-partial-parse --target-path /data/dbt-target
 
 echo "==> export marts to Postgres for Metabase"
 for mart in mart_house_price_index mart_house_price_yoy mart_house_price_latest mart_gdp_growth_qoq; do
