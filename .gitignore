@@ -14,3 +14,8 @@ deploy/helm/*/charts/
 deploy/terraform/.terraform/
 deploy/terraform/**/.terraform/
 .venv-test/
+
+# Terraform local state + secrets (keep *.tfvars.example)
+*.tfstate
+*.tfstate.*
+terraform.tfvars

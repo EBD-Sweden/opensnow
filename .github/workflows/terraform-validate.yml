@@ -31,6 +31,8 @@ jobs:
             dir: deploy/terraform/gcp
           - provider: oci
             dir: deploy/terraform/oci
+          - provider: hetzner
+            dir: deploy/terraform/hetzner
     steps:
       - uses: actions/checkout@v4
 

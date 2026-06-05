@@ -21,27 +21,45 @@ terraform {
   }
 }
 
+# Auth: by default read the same ~/.oci/config profile the OCI CLI uses
+# (var.config_file_profile, default "DEFAULT"). Set var.use_config_file=false to
+# instead use the explicit API-key vars (e.g. for CI / non-interactive runs).
 provider "oci" {
-  tenancy_ocid     = var.tenancy_ocid
-  user_ocid        = var.user_ocid
-  fingerprint      = var.fingerprint
-  private_key_path = var.private_key_path
-  region           = var.region
+  auth                = "ApiKey"
+  config_file_profile = var.use_config_file ? var.config_file_profile : null
+
+  tenancy_ocid         = var.use_config_file ? null : var.tenancy_ocid
+  user_ocid            = var.use_config_file ? null : var.user_ocid
+  fingerprint          = var.use_config_file ? null : var.fingerprint
+  private_key_path     = var.use_config_file ? null : var.private_key_path
+  private_key_password = var.use_config_file ? null : var.private_key_password
+  region               = var.region
 }
 
-# Pick the first availability domain in the compartment's tenancy.
+# Availability domain: use var.availability_domain if given, else list and take the first.
 data "oci_identity_availability_domains" "ads" {
-  compartment_id = var.tenancy_ocid
+  count          = var.availability_domain == "" ? 1 : 0
+  compartment_id = var.compartment_ocid
 }
 
-# Latest Ubuntu 22.04 aarch64 image for the A1 shape (region-specific OCID resolved here).
+locals {
+  availability_domain = var.availability_domain != "" ? var.availability_domain : data.oci_identity_availability_domains.ads[0].availability_domains[0].name
+}
+
+# Resolve the Ubuntu ARM image: use var.image_ocid if given, else auto-discover
+# the latest Ubuntu 22.04 aarch64 for the A1 shape in this region.
 data "oci_core_images" "ubuntu_arm" {
+  count                    = var.image_ocid == "" ? 1 : 0
   compartment_id           = var.compartment_ocid
   operating_system         = "Canonical Ubuntu"
   operating_system_version = "22.04"
   shape                    = "VM.Standard.A1.Flex"
   sort_by                  = "TIMECREATED"
   sort_order               = "DESC"
+}
+
+locals {
+  image_id = var.image_ocid != "" ? var.image_ocid : data.oci_core_images.ubuntu_arm[0].images[0].id
 }
 
 # ── Networking ────────────────────────────────────────────────────────────────
@@ -103,7 +121,7 @@ resource "oci_core_subnet" "demo" {
 # ── Compute (Always-Free ARM) ─────────────────────────────────────────────────
 resource "oci_core_instance" "demo" {
   compartment_id      = var.compartment_ocid
-  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
+  availability_domain = local.availability_domain
   display_name        = "opensnow-demo"
   shape               = "VM.Standard.A1.Flex"
 
@@ -119,7 +137,7 @@ resource "oci_core_instance" "demo" {
 
   source_details {
     source_type = "image"
-    source_id   = data.oci_core_images.ubuntu_arm.images[0].id
+    source_id   = local.image_id
   }
 
   metadata = {

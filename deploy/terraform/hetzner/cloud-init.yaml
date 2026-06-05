@@ -1,0 +1,12 @@
+#cloud-config
+# Bootstraps the OpenSnow public-demo stack on first boot.
+# Terraform templatefile substitutes demo_domain / dash_domain / repo_url;
+# shell command-substitutions run on the VM. (Hetzner ingress is handled by the
+# hcloud_firewall, so no local iptables tweaks are needed.)
+package_update: true
+runcmd:
+  - ["bash", "-lc", "curl -fsSL https://get.docker.com | sh"]
+  - ["bash", "-lc", "git clone ${repo_url} /opt/opensnow"]
+  - ["bash", "-lc", "cd /opt/opensnow/deploy/demo && { echo OPENSNOW_DEMO_DOMAIN=${demo_domain}; echo OPENSNOW_DASH_DOMAIN=${dash_domain}; echo OPENSNOW_DEMO_PG_PASSWORD=$(openssl rand -hex 16); } > .env"]
+  - ["bash", "-lc", "cd /opt/opensnow/deploy/demo && docker compose up -d --build"]
+  - ["bash", "-lc", "cd /opt/opensnow/deploy/demo && for i in $(seq 1 120); do curl -fsS http://localhost:8080/health >/dev/null 2>&1 && break; sleep 5; done; docker compose run --rm seed || true"]

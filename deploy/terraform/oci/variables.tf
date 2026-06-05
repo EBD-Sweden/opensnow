@@ -1,23 +1,46 @@
-# OCI API credentials. Generate with `oci setup config`, or create an API key in
-# the console (User Settings → API Keys) and fill these in terraform.tfvars.
+# Auth mode. Default: reuse the OCI CLI's ~/.oci/config (simplest for local use).
+variable "use_config_file" {
+  type        = bool
+  default     = true
+  description = "If true, authenticate via ~/.oci/config (like the OCI CLI). If false, use the explicit API-key vars below (CI/non-interactive)."
+}
+
+variable "config_file_profile" {
+  type        = string
+  default     = "DEFAULT"
+  description = "Profile name in ~/.oci/config (used when use_config_file=true)."
+}
+
+# Explicit OCI API credentials — only needed when use_config_file=false.
 variable "tenancy_ocid" {
   type        = string
-  description = "Tenancy OCID."
+  default     = ""
+  description = "Tenancy OCID (explicit-auth mode)."
 }
 
 variable "user_ocid" {
   type        = string
-  description = "User OCID for the API key."
+  default     = ""
+  description = "User OCID for the API key (explicit-auth mode)."
 }
 
 variable "fingerprint" {
   type        = string
-  description = "API key fingerprint."
+  default     = ""
+  description = "API key fingerprint (explicit-auth mode)."
 }
 
 variable "private_key_path" {
   type        = string
-  description = "Path to the API private key (PEM)."
+  default     = ""
+  description = "Path to the API private key PEM (explicit-auth mode)."
+}
+
+variable "private_key_password" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Passphrase for the API private key, if it is encrypted (matches `pass_phrase` in ~/.oci/config)."
 }
 
 variable "region" {
@@ -64,4 +87,16 @@ variable "repo_url" {
   type        = string
   default     = "https://github.com/EBD-Sweden/opensnow"
   description = "Repo cloned on the VM to build/run the demo bundle."
+}
+
+variable "image_ocid" {
+  type        = string
+  default     = ""
+  description = "Ubuntu 22.04 aarch64 image OCID. Empty = auto-discover the latest for the region."
+}
+
+variable "availability_domain" {
+  type        = string
+  default     = ""
+  description = "Availability domain name (e.g. mcDH:EU-STOCKHOLM-1-AD-1). Empty = use the first in the tenancy."
 }
