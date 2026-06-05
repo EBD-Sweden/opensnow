@@ -1,0 +1,19 @@
+#cloud-config
+# Bootstraps the OpenSnow public-demo stack on first boot.
+# Note: Terraform templatefile substitutes the named vars (demo_domain,
+# dash_domain, repo_url); shell command-substitutions run on the VM.
+package_update: true
+runcmd:
+  # OCI Ubuntu images ship an iptables ruleset that only allows SSH — open 80/443
+  # for Caddy/Let's Encrypt and persist it.
+  - ["bash", "-lc", "iptables -I INPUT 1 -p tcp --dport 80 -j ACCEPT && iptables -I INPUT 1 -p tcp --dport 443 -j ACCEPT"]
+  - ["bash", "-lc", "DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent && netfilter-persistent save"]
+  # Docker
+  - ["bash", "-lc", "curl -fsSL https://get.docker.com | sh"]
+  # Demo stack
+  - ["bash", "-lc", "git clone ${repo_url} /opt/opensnow"]
+  - ["bash", "-lc", "cd /opt/opensnow/deploy/demo && { echo OPENSNOW_DEMO_DOMAIN=${demo_domain}; echo OPENSNOW_DASH_DOMAIN=${dash_domain}; echo OPENSNOW_DEMO_PG_PASSWORD=$(openssl rand -hex 16); } > .env"]
+  # Build + start (the OpenSnow image build on ARM can take 15-30 min on first boot).
+  - ["bash", "-lc", "cd /opt/opensnow/deploy/demo && docker compose up -d --build"]
+  # One-time seed once OpenSnow is healthy.
+  - ["bash", "-lc", "cd /opt/opensnow/deploy/demo && for i in $(seq 1 120); do curl -fsS http://localhost:8080/health >/dev/null 2>&1 && break; sleep 5; done; docker compose run --rm seed || true"]

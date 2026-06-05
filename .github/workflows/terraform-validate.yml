@@ -29,6 +29,8 @@ jobs:
             dir: deploy/terraform
           - provider: gcp
             dir: deploy/terraform/gcp
+          - provider: oci
+            dir: deploy/terraform/oci
     steps:
       - uses: actions/checkout@v4
 

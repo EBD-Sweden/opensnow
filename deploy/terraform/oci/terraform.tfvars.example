@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and fill in. Get the OCIDs/fingerprint/key from
+# `oci setup config`, or OCI Console → User Settings → API Keys.
+
+tenancy_ocid     = "ocid1.tenancy.oc1..xxxx"
+user_ocid        = "ocid1.user.oc1..xxxx"
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "eu-stockholm-1"
+compartment_ocid = "ocid1.tenancy.oc1..xxxx" # often the tenancy OCID
+ssh_public_key   = "ssh-ed25519 AAAA... you@host"
+
+# Optional overrides (defaults shown):
+# ocpus       = 2
+# memory_gbs  = 12
+# demo_domain = "opensnow.ebdsweden.com"
+# dash_domain = "metabase.ebdsweden.com"
