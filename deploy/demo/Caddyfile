@@ -1,0 +1,26 @@
+# Auto-HTTPS for the OpenSnow public demo (Let's Encrypt).
+# Two subdomains, one VM. Set OPENSNOW_DEMO_DOMAIN / OPENSNOW_DASH_DOMAIN.
+
+{$OPENSNOW_DEMO_DOMAIN} {
+	encode gzip
+
+	# Block admin/write endpoints from the public internet (defense in depth;
+	# they are admin-scoped in-app, and the seed reaches OpenSnow internally,
+	# bypassing Caddy). The read-only /pipeline view + gated /api/v1/query stay open.
+	@admin path /api/v1/pipeline/run /api/v1/export/postgres /api/v1/tables/register /api/v1/ingest* /api/v1/tenants
+	respond @admin "forbidden on the public demo" 403
+
+	# Light rate limit via request body cap; OpenSnow also enforces a query timeout
+	# and the public SQL gate. Keep request bodies small.
+	request_body {
+		max_size 64KB
+	}
+
+	reverse_proxy opensnow:8080
+}
+
+# Metabase on its own subdomain — embedded into the EBD site via public iframe.
+{$OPENSNOW_DASH_DOMAIN} {
+	encode gzip
+	reverse_proxy metabase:3000
+}

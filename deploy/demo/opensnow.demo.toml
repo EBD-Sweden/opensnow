@@ -1,0 +1,16 @@
+# OpenSnow public-demo config (opensnow.ebdsweden.com).
+#
+# The REST/console surface is the public-demo SQL gate (SELECT/CTAS/SHOW only);
+# pgwire + trusted SQL are used only INSIDE the compose network (for the dbt
+# seed) and are never published to the host or proxied by Caddy.
+[server]
+http_port = 8080
+pg_port = 5433
+pg_enabled = true        # internal-only (not exposed via Caddy / host)
+host = "0.0.0.0"         # container network; fronted by Caddy + OPENSNOW_ALLOW_PUBLIC=1
+
+[storage]
+warehouse_path = "/data/warehouse"
+
+[catalog]
+path = "/data/catalog.db"

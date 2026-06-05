@@ -1,0 +1,12 @@
+eurostat:
+  target: dev
+  outputs:
+    dev:
+      type: opensnow
+      host: "{{ env_var('OPENSNOW_PG_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('OPENSNOW_PG_PORT', '5433') | as_number }}"
+      user: opensnow
+      password: demo
+      dbname: opensnow
+      schema: public
+      threads: 1

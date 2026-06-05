@@ -1,0 +1,7 @@
+version: 2
+sources:
+  - name: eurostat_raw
+    schema: public
+    tables:
+      - name: prc_hpi_q
+      - name: naidq_10_gdp

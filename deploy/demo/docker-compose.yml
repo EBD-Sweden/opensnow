@@ -1,0 +1,102 @@
+# OpenSnow public demo — opensnow.ebdsweden.com
+#
+# One-box stack for a free Oracle Cloud Always-Free ARM VM:
+#   Caddy (auto-HTTPS)  →  OpenSnow console + read-only /pipeline  (public, gated)
+#                       →  /metabase  → Metabase (embedded dashboard)
+#   OpenSnow pgwire + dbt seed + Postgres: internal to this network only.
+#
+# Usage on the VM:
+#   export OPENSNOW_DEMO_DOMAIN=opensnow.ebdsweden.com
+#   export OPENSNOW_DEMO_PG_PASSWORD=$(openssl rand -hex 16)
+#   docker compose up -d --build
+# Then run the one-time seed:  docker compose run --rm seed
+services:
+  opensnow:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["start", "--config", "/etc/opensnow/opensnow.toml", "--http-port", "8080", "--enable-pgwire"]
+    environment:
+      RUST_LOG: warn
+      OPENSNOW_OTEL_DISABLED: "1"
+      # Container binds 0.0.0.0 on the internal network; only HTTP is fronted by Caddy.
+      OPENSNOW_ALLOW_PUBLIC: "1"
+      # Trusted SQL is reachable only on the internal docker network (pgwire is
+      # never published), so the dbt seed can build models while the public
+      # HTTP surface stays on the safe demo SQL gate.
+      OPENSNOW_TRUSTED_SQL: "1"
+      OPENSNOW_DBT_ARTIFACTS_DIR: /data/dbt-target
+      OPENSNOW_DASHBOARD_URL: ${OPENSNOW_DASHBOARD_URL:-/metabase}
+      OPENSNOW_DASHBOARD_NAME: "Eurostat — EU Housing & Growth"
+      OPENSNOW_QUERY_TIMEOUT_SECS: "20"
+    volumes:
+      - ./opensnow.demo.toml:/etc/opensnow/opensnow.toml:ro
+      # Sample data auto-registers as tables (warehouse public dir).
+      - ./sample-data:/data/warehouse/opensnow/public:ro
+      - opensnow-data:/data
+    expose: ["8080"]            # internal only — Caddy proxies it
+    networks: [demo]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: eurostat
+      POSTGRES_PASSWORD: ${OPENSNOW_DEMO_PG_PASSWORD:?set OPENSNOW_DEMO_PG_PASSWORD}
+      POSTGRES_DB: eurostat
+    volumes: [pg-data:/var/lib/postgresql/data]
+    expose: ["5432"]
+    networks: [demo]
+
+  metabase:
+    image: metabase/metabase:latest
+    restart: unless-stopped
+    environment:
+      # Metabase on its own subdomain (root path) — robust + clean iframe URLs.
+      MB_SITE_URL: https://${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}
+      MB_JETTY_PORT: "3000"
+    volumes: [metabase-data:/metabase-data]
+    expose: ["3000"]
+    networks: [demo]
+    depends_on: [postgres]
+
+  # One-shot: build the dbt marts in OpenSnow and export them to Postgres for Metabase.
+  seed:
+    build:
+      context: ../..
+      dockerfile: deploy/demo/seed.Dockerfile
+    environment:
+      OPENSNOW_HTTP: http://opensnow:8080
+      OPENSNOW_PG_HOST: opensnow
+      OPENSNOW_PG_PORT: "5433"
+      TARGET_PG_DSN: postgres://eurostat:${OPENSNOW_DEMO_PG_PASSWORD}@postgres:5432/eurostat
+    volumes:
+      - opensnow-data:/data           # write dbt artifacts where OpenSnow reads them
+    networks: [demo]
+    depends_on: [opensnow, postgres]
+    profiles: ["seed"]                # run explicitly: docker compose run --rm seed
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      OPENSNOW_DEMO_DOMAIN: ${OPENSNOW_DEMO_DOMAIN:?set OPENSNOW_DEMO_DOMAIN}
+      OPENSNOW_DASH_DOMAIN: ${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [demo]
+    depends_on: [opensnow, metabase]
+
+networks:
+  demo:
+
+volumes:
+  opensnow-data:
+  pg-data:
+  metabase-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,7 @@
+name: eurostat
+version: "1.0"
+profile: eurostat
+model-paths: ["models"]
+models:
+  eurostat:
+    +materialized: table
