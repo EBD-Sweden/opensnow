@@ -2,6 +2,7 @@ pub mod agent_tools;
 pub mod auto_schema;
 pub mod dispatch;
 pub mod harness;
+pub mod llm;
 pub mod mcp;
 pub mod metadata_api;
 pub mod nl2sql;

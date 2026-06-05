@@ -123,37 +123,129 @@ impl Tool for SchemaIntrospectTool {
 /// skeleton plan describing CTAS statements the agent may want to review.
 pub struct MigrationPlannerTool;
 
+/// The heuristic fallback action — also the contract the refactor task smoke-tests.
+fn heuristic_actions(target: &str) -> Value {
+    let name = if target.is_empty() { "fact" } else { target };
+    json!([{
+        "kind": "ctas_mart",
+        "sql": format!("CREATE TABLE {name}_mart AS SELECT * FROM {name};"),
+        "rationale": "heuristic: materialize a mart from the source table",
+    }])
+}
+
+/// Compact "table(col type, …)" summary of the public schema for the LLM.
+async fn schema_summary(ctx: &mut AgentContext) -> Result<String> {
+    let sql = "SELECT table_name, column_name, data_type FROM information_schema.columns \
+               WHERE table_schema = 'public' ORDER BY table_name, ordinal_position";
+    let batches = ctx.engine.execute_sql_raw(sql).await?;
+    let mut tables: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for batch in &batches {
+        for i in 0..batch.num_rows() {
+            let t =
+                arrow::util::display::array_value_to_string(batch.column(0), i).unwrap_or_default();
+            let c =
+                arrow::util::display::array_value_to_string(batch.column(1), i).unwrap_or_default();
+            let d =
+                arrow::util::display::array_value_to_string(batch.column(2), i).unwrap_or_default();
+            tables.entry(t).or_default().push(format!("{c} {d}"));
+        }
+    }
+    Ok(tables
+        .into_iter()
+        .take(60)
+        .map(|(t, cols)| format!("{t}({})", cols.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+fn recent_sql(ctx: &mut AgentContext, limit: usize) -> String {
+    ctx.engine
+        .catalog()
+        .recent_queries(limit)
+        .map(|recs| {
+            recs.iter()
+                .map(|r| r.sql.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
 #[async_trait::async_trait(?Send)]
 impl Tool for MigrationPlannerTool {
     fn name(&self) -> &'static str {
         "migration_planner"
     }
 
-    async fn invoke(&self, _ctx: &mut AgentContext, params: Value) -> Result<Value> {
+    async fn invoke(&self, ctx: &mut AgentContext, params: Value) -> Result<Value> {
         let target_table = params
             .get("target_table")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
             .unwrap_or("fact")
             .to_string();
 
-        // Very simple plan: propose a mart CTAS that selects all columns
-        // from the target table. Real logic will use query history and
-        // schema introspection to shape this.
-        let ctas_sql = format!(
-            "CREATE TABLE {name}_mart AS SELECT * FROM {name};",
-            name = target_table
+        // No LLM configured → deterministic skeleton (preserves the contract).
+        if !crate::llm::available() {
+            return Ok(json!({
+                "target_table": target_table,
+                "planner": "heuristic",
+                "note": "Set OPENSNOW_ENABLE_LLM_PLANNER=1 and ANTHROPIC_API_KEY for an LLM-designed refactor plan.",
+                "actions": heuristic_actions(&target_table),
+            }));
+        }
+
+        let schema = schema_summary(ctx).await.unwrap_or_default();
+        let history = recent_sql(ctx, 40);
+        let system = "You are a senior analytics engineer refactoring a Snowflake-style \
+            warehouse into clean staging → core → mart layers. Propose a minimal, \
+            dependency-aware refactor that removes redundant staging tables and consolidates \
+            duplicated logic. Output STRICT JSON only — no prose outside the JSON.";
+        let focus = target_table.clone();
+        let user = format!(
+            "Warehouse tables (name(columns)):\n{schema}\n\n\
+             Recent queries (frequently-referenced tables matter most):\n{history}\n\n\
+             Focus: {focus}\n\n\
+             Return JSON: {{\"analysis\": \"2-3 sentences on redundancy and the proposed \
+             hierarchy\", \"actions\": [{{\"kind\": \"ctas_staging\"|\"ctas_mart\"|\"drop\", \
+             \"sql\": \"CREATE TABLE x AS SELECT ...\", \"rationale\": \"why\"}}]}}. \
+             Use real table/column names from the schema. Read-only DDL proposals only."
         );
 
-        Ok(json!({
-            "target_table": target_table,
-            "actions": [
-                {
-                    "kind": "ctas_mart",
-                    "sql": ctas_sql,
-                    "estimated_cost": serde_json::Value::Null,
+        match crate::llm::complete(system, &user, 2000) {
+            Ok(text) => {
+                if let Some(v) = crate::llm::extract_json(&text) {
+                    let actions = v
+                        .get("actions")
+                        .filter(|a| a.as_array().map(|x| !x.is_empty()).unwrap_or(false))
+                        .cloned()
+                        .unwrap_or_else(|| heuristic_actions(&target_table));
+                    Ok(json!({
+                        "target_table": target_table,
+                        "planner": "llm",
+                        "model": crate::llm::model(),
+                        "analysis": v.get("analysis").cloned().unwrap_or(Value::Null),
+                        "actions": actions,
+                    }))
+                } else {
+                    // Couldn't parse JSON — surface raw text, keep a valid action.
+                    Ok(json!({
+                        "target_table": target_table,
+                        "planner": "llm",
+                        "model": crate::llm::model(),
+                        "plan_text": text,
+                        "actions": heuristic_actions(&target_table),
+                    }))
                 }
-            ]
-        }))
+            }
+            Err(e) => Ok(json!({
+                "target_table": target_table,
+                "planner": "heuristic",
+                "note": format!("LLM call failed ({e}); using heuristic."),
+                "actions": heuristic_actions(&target_table),
+            })),
+        }
     }
 }
 
