@@ -8,11 +8,45 @@ sources:
         description: >
           Eurostat House Price Index, quarterly. Residential property prices,
           index 2015=100, by country, unit and type of purchase.
-        meta:
-          label: House Price Index (quarterly)
+        meta: { label: House Price Index (quarterly) }
       - name: naidq_10_gdp
         description: >
           Eurostat quarterly national accounts — GDP and main aggregates
           (output, expenditure and income approach), by country.
-        meta:
-          label: GDP & national accounts (quarterly)
+        meta: { label: GDP & national accounts (quarterly) }
+      - name: nasq_10_f_bs
+        description: >
+          Household financial balance sheets (sector S14), quarterly. Stocks of
+          deposits, loans, equity, insurance & pensions — EUR millions.
+        meta: { label: Household financial balance sheets }
+      - name: nasq_10_ki
+        description: >
+          Household key indicators, quarterly: gross saving rate, real disposable
+          income per capita, net financial wealth.
+        meta: { label: Household key indicators }
+      - name: prc_hicp_manr
+        description: >
+          HICP consumer-price inflation, monthly annual rate of change, headline
+          plus energy / food / services aggregates.
+        meta: { label: Inflation (HICP, annual rate) }
+      - name: irt_st_q
+        description: Short-term money-market interest rates (incl. 3-month), quarterly.
+        meta: { label: Short-term interest rates }
+      - name: irt_lt_mcby_q
+        description: Long-term government bond yields (10y Maastricht convergence), quarterly.
+        meta: { label: Long-term bond yields }
+      - name: namq_10_pe
+        description: Population and employment, quarterly (used for per-capita figures).
+        meta: { label: Population & employment }
+      - name: gov_10q_ggdebt
+        description: General government gross debt, % of GDP, quarterly.
+        meta: { label: Government debt (% GDP) }
+      - name: gov_10dd_edpt1
+        description: Government deficit/surplus and gross debt (EDP), % of GDP, annual.
+        meta: { label: Government deficit & debt }
+      - name: nama_10_lp_ulc
+        description: Nominal unit labour cost per hour, index 2015=100, annual.
+        meta: { label: Unit labour costs }
+      - name: ert_eff_ic_q
+        description: Effective exchange rates (real & nominal, vs 42 partners), 2015=100.
+        meta: { label: Effective exchange rates }

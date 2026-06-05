@@ -192,6 +192,71 @@ impl McpServer {
                         },
                         "required": ["queries"]
                     }
+                },
+                {
+                    "name": "dbt_list_models",
+                    "description": "List every dbt model (pipeline step) in the project with its layer (staging/mart).",
+                    "inputSchema": { "type": "object", "properties": {} }
+                },
+                {
+                    "name": "dbt_get_model",
+                    "description": "Return the SQL source of one dbt model by name.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "name": { "type": "string", "description": "Model name (no .sql)" } },
+                        "required": ["name"]
+                    }
+                },
+                {
+                    "name": "dbt_write_model",
+                    "description": "Create or overwrite a dbt model's SQL. Use ref()/source() in the SQL. Run pipeline_run afterwards to build it.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Model name (letters/digits/underscore)" },
+                            "sql": { "type": "string", "description": "The model SQL" },
+                            "layer": { "type": "string", "enum": ["staging", "marts"], "description": "Subfolder for new models (default marts)" }
+                        },
+                        "required": ["name", "sql"]
+                    }
+                },
+                {
+                    "name": "dbt_delete_model",
+                    "description": "Delete a dbt model file by name.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "name": { "type": "string" } },
+                        "required": ["name"]
+                    }
+                },
+                {
+                    "name": "pipeline_run",
+                    "description": "Run the pipeline (dbt run) in dependency order, building models on OpenSnow. Returns success and a log tail.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "select": { "type": "string", "description": "Optional dbt --select expression" } }
+                    }
+                },
+                {
+                    "name": "pipeline_status",
+                    "description": "Read the pipeline DAG and last-run status from dbt artifacts (models, dependencies, per-node status).",
+                    "inputSchema": { "type": "object", "properties": {} }
+                },
+                {
+                    "name": "schedule_get",
+                    "description": "Read the configured pipeline schedule (cron/interval).",
+                    "inputSchema": { "type": "object", "properties": {} }
+                },
+                {
+                    "name": "schedule_set",
+                    "description": "Set the pipeline schedule. Provide 'cron' (e.g. '0 6 * * *') or 'interval_secs'.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "cron": { "type": "string", "description": "5/6-field cron expression" },
+                            "interval_secs": { "type": "integer", "description": "Fixed interval in seconds" }
+                        }
+                    }
                 }
             ]
         }))
@@ -326,8 +391,10 @@ impl McpServer {
                 }))
             }
 
-            // ── Analytics tools routed through AgentRuntime ───────────────
-            "schema_introspect" | "query_history" | "migration_planner" | "refactor_test" => {
+            // ── Analytics + platform tools routed through AgentRuntime ─────
+            "schema_introspect" | "query_history" | "migration_planner" | "refactor_test"
+            | "dbt_list_models" | "dbt_get_model" | "dbt_write_model" | "dbt_delete_model"
+            | "pipeline_run" | "pipeline_status" | "schedule_get" | "schedule_set" => {
                 let mut ctx = AgentContext::new(Arc::clone(&self.engine), "default", None);
                 let runtime = build_runtime();
 

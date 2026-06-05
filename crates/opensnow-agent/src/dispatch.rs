@@ -6,6 +6,10 @@ use crate::agent_tools::{
     MigrationPlannerTool, QueryHistoryTool, RefactorTestTool, SchemaIntrospectTool,
 };
 use crate::harness::{AgentContext, AgentRuntime, AgentTask};
+use crate::platform_tools::{
+    DbtDeleteModelTool, DbtGetModelTool, DbtListModelsTool, DbtWriteModelTool, PipelineRunTool,
+    PipelineStatusTool, ScheduleGetTool, ScheduleSetTool,
+};
 use crate::schema_refactor_task::AnalyticsSchemaRefactorTask;
 
 /// Build a fully-wired `AgentRuntime` with all analytics tools registered.
@@ -18,6 +22,15 @@ pub fn build_runtime() -> AgentRuntime {
     rt.register_tool(QueryHistoryTool { default_limit: 100 });
     rt.register_tool(MigrationPlannerTool);
     rt.register_tool(RefactorTestTool);
+    // Platform control-plane: manage dbt models, run the pipeline, set schedule.
+    rt.register_tool(DbtListModelsTool);
+    rt.register_tool(DbtGetModelTool);
+    rt.register_tool(DbtWriteModelTool);
+    rt.register_tool(DbtDeleteModelTool);
+    rt.register_tool(PipelineRunTool);
+    rt.register_tool(PipelineStatusTool);
+    rt.register_tool(ScheduleGetTool);
+    rt.register_tool(ScheduleSetTool);
     rt
 }
 

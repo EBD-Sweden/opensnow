@@ -1,26 +1,82 @@
 version: 2
 models:
+  # staging
   - name: stg_house_prices
     description: Cleaned, typed house-price observations (nulls dropped).
-    meta:
-      label: House prices — cleaned
+    meta: { label: House prices — cleaned }
   - name: stg_gdp
     description: Cleaned, typed GDP observations (nulls dropped).
-    meta:
-      label: GDP — cleaned
+    meta: { label: GDP — cleaned }
+  - name: stg_inflation
+    description: HICP annual inflation rate, monthly, by COICOP component.
+    meta: { label: Inflation — cleaned }
+  - name: stg_interest_rates
+    description: Short-term (3m) and long-term (10y) interest rates, unified.
+    meta: { label: Interest rates — cleaned }
+  - name: stg_household_kpi
+    description: Household saving rate, income per capita and wealth indicators.
+    meta: { label: Household indicators — cleaned }
+  - name: stg_household_balance
+    description: Household financial balance sheet by instrument (EUR millions).
+    meta: { label: Household balance sheet — cleaned }
+  - name: stg_population
+    description: Quarterly population (thousands), for per-capita figures.
+    meta: { label: Population — cleaned }
+
+  # marts — housing & growth
   - name: mart_house_price_index
-    description: House Price Index per country per quarter (2015=100), analytics-ready.
-    meta:
-      label: House Price Index over time
+    description: House Price Index per country per quarter (2015=100).
+    meta: { label: House Price Index over time }
   - name: mart_house_price_yoy
-    description: Year-on-year % change in the house price index, per country per quarter.
-    meta:
-      label: House Price YoY %
+    description: Year-on-year % change in the house price index.
+    meta: { label: House Price YoY % }
   - name: mart_house_price_latest
     description: The most recent House Price Index value per country.
-    meta:
-      label: Latest House Price Index
+    meta: { label: Latest House Price Index }
   - name: mart_gdp_growth_qoq
-    description: Quarter-on-quarter real GDP growth %, per country per quarter.
-    meta:
-      label: GDP Growth QoQ %
+    description: Quarter-on-quarter real GDP growth %.
+    meta: { label: GDP Growth QoQ % }
+
+  # marts — household banking & savings
+  - name: mart_household_savings
+    description: Household saving rate, real income per capita, net financial wealth.
+    meta: { label: Household savings & income }
+  - name: mart_household_banking
+    description: Bank deposits & debt per capita and their share of the balance sheet.
+    meta: { label: Household banking (deposits & debt) }
+  - name: mart_household_asset_mix
+    description: Composition of household financial assets (deposits/equity/pensions/bonds).
+    meta: { label: Household asset mix }
+
+  # marts — cost of living & rates
+  - name: mart_inflation
+    description: HICP inflation headline plus energy/food/services breakdown.
+    meta: { label: Inflation breakdown }
+  - name: mart_cost_of_living
+    description: Real income growth vs inflation vs house-price growth (the household squeeze).
+    meta: { label: Cost-of-living squeeze }
+  - name: mart_rates_vs_housing
+    description: Interest rates alongside house prices and household debt (transmission).
+    meta: { label: Rates vs housing }
+
+  # staging — sovereign & competitiveness
+  - name: stg_gov_debt
+    description: Government gross debt, % of GDP, quarterly.
+    meta: { label: Government debt — cleaned }
+  - name: stg_gov_deficit
+    description: Government deficit (B9) and debt (GD), % of GDP, annual.
+    meta: { label: Government deficit — cleaned }
+  - name: stg_ulc
+    description: Nominal unit labour cost index (2015=100), annual.
+    meta: { label: Unit labour costs — cleaned }
+  - name: stg_exch_rates
+    description: Effective exchange-rate indices (REER/NEER), quarterly.
+    meta: { label: Exchange rates — cleaned }
+
+  # marts — sovereign & competitiveness
+  - name: mart_sovereign_risk
+    description: Government debt-to-GDP, deficit and 10y bond yield together.
+    meta: { label: Sovereign risk }
+  - name: mart_competitiveness
+    description: Unit labour cost vs real/nominal effective exchange rate.
+    meta: { label: Competitiveness }

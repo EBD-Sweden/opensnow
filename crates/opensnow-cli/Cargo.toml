@@ -24,4 +24,5 @@ toml.workspace = true
 parquet.workspace = true
 serde_json.workspace = true
 opensnow-distributed.workspace = true
+opensnow-agent.workspace = true
 hostname = "0.4"

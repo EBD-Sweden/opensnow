@@ -3078,6 +3078,7 @@ dependencies = [
  "arrow",
  "clap",
  "hostname",
+ "opensnow-agent",
  "opensnow-catalog",
  "opensnow-core",
  "opensnow-distributed",

@@ -109,6 +109,22 @@ enum Commands {
         limit: usize,
     },
 
+    /// Run the MCP server over stdio so an LLM (Claude) can manage the platform:
+    /// read/edit dbt models, run pipelines, change the schedule.
+    Mcp,
+
+    /// Invoke a single platform/agent tool and print its JSON result. Tools:
+    /// dbt_list_models, dbt_get_model, dbt_write_model, dbt_delete_model,
+    /// pipeline_run, pipeline_status, schedule_get, schedule_set, plus the
+    /// analytics tools (schema_introspect, query_history, migration_planner).
+    Agent {
+        /// Tool name
+        tool: String,
+        /// JSON arguments object, e.g. '{"name":"stg_gdp"}'
+        #[arg(default_value = "{}")]
+        args: String,
+    },
+
     /// Reconcile warehouses against a worker pool (operator dry-run)
     OperatorPlan {
         /// Current worker replicas per warehouse, e.g. "default=2,etl=0"
@@ -799,12 +815,16 @@ mod cli_tests {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let is_cli_contract_command = matches!(&cli.command, Commands::Cli { .. });
+    // mcp speaks JSON-RPC on stdout and agent prints JSON results, so their
+    // stdout must stay clean — disable OTel and send logs to stderr.
+    let quiet_stdout =
+        is_cli_contract_command || matches!(&cli.command, Commands::Mcp | Commands::Agent { .. });
 
     // Initialise tracing + OpenTelemetry. `OPENSNOW_OTEL_DISABLED=1` falls
     // back to a plain `fmt` subscriber for environments where the OTel
     // exporter is undesirable (e.g. unit tests piped through cargo). Contract
     // output skips telemetry entirely so `--format json` remains clean JSON.
-    let otel_disabled = is_cli_contract_command
+    let otel_disabled = quiet_stdout
         || std::env::var("OPENSNOW_OTEL_DISABLED")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -812,6 +832,7 @@ async fn main() -> Result<()> {
         None
     } else if otel_disabled {
         tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .with_env_filter(
                 EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
             )
@@ -1122,6 +1143,44 @@ path = "~/.opensnow/catalog.db"
                 "- Evaluate partitioning and clustering on timestamp / customer dimensions for heavy tables."
             );
             println!("\n(Automatic suggestions will be implemented in a later pass.)");
+        }
+
+        Commands::Mcp => {
+            use std::io::{BufRead, Write};
+            let engine = create_engine(&config)?;
+            let server = opensnow_agent::mcp::McpServer::new(std::sync::Arc::new(engine));
+            let stdin = std::io::stdin();
+            let stdout = std::io::stdout();
+            for line in stdin.lock().lines() {
+                let line = line?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let resp = match serde_json::from_str::<opensnow_agent::mcp::McpRequest>(&line) {
+                    Ok(req) => serde_json::to_string(&server.handle_request(req).await)?,
+                    Err(e) => format!(
+                        "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32700,\"message\":\"parse error: {e}\"}}}}"
+                    ),
+                };
+                let mut out = stdout.lock();
+                writeln!(out, "{resp}")?;
+                out.flush()?;
+            }
+        }
+
+        Commands::Agent { tool, args } => {
+            let engine = create_engine(&config)?;
+            let params: serde_json::Value = serde_json::from_str(&args)
+                .map_err(|e| anyhow::anyhow!("invalid JSON args: {e}"))?;
+            let runtime = opensnow_agent::build_runtime();
+            let mut ctx = opensnow_agent::harness::AgentContext::new(engine, "default", None);
+            match runtime.invoke_tool(&tool, &mut ctx, params).await {
+                Ok(result) => println!("{}", serde_json::to_string_pretty(&result)?),
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
 
         Commands::OperatorPlan { current } => {

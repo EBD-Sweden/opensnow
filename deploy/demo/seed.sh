@@ -25,7 +25,11 @@ cd /work/dbt
 DBT_PROFILES_DIR=/work/dbt dbt run --no-partial-parse --target-path /data/dbt-target
 
 echo "==> export marts to Postgres for Metabase"
-for mart in mart_house_price_index mart_house_price_yoy mart_house_price_latest mart_gdp_growth_qoq; do
+MARTS="mart_house_price_index mart_house_price_yoy mart_house_price_latest mart_gdp_growth_qoq \
+mart_household_savings mart_household_banking mart_household_asset_mix \
+mart_inflation mart_cost_of_living mart_rates_vs_housing \
+mart_sovereign_risk mart_competitiveness"
+for mart in $MARTS; do
   echo "   -> eurostat.$mart"
   curl -fsS -X POST "$OPENSNOW_HTTP/api/v1/export/postgres" -H 'content-type: application/json' \
     -d "{\"sql\":\"SELECT * FROM $mart\",\"dsn\":\"$TARGET_PG_DSN\",\"schema\":\"eurostat\",\"table\":\"$mart\",\"mode\":\"replace\"}"

@@ -5,6 +5,7 @@ pub mod harness;
 pub mod mcp;
 pub mod metadata_api;
 pub mod nl2sql;
+pub mod platform_tools;
 pub mod schema_refactor_task;
 pub mod tools;
 

@@ -307,7 +307,34 @@ var FRIENDLY = {                  // fallback labels if dbt descriptions are abs
   mart_house_price_index:{ label: "House Price Index over time", desc: "HPI per country per quarter (2015=100)." },
   mart_house_price_yoy: { label: "House Price YoY %", desc: "Year-on-year change in the house price index." },
   mart_house_price_latest:{ label: "Latest House Price Index", desc: "Most recent HPI per country." },
-  mart_gdp_growth_qoq:  { label: "GDP Growth QoQ %", desc: "Quarter-on-quarter real GDP growth." }
+  mart_gdp_growth_qoq:  { label: "GDP Growth QoQ %", desc: "Quarter-on-quarter real GDP growth." },
+  nasq_10_f_bs:         { label: "Household balance sheets", desc: "Household deposits, loans, equity, pensions (EUR mn)." },
+  nasq_10_ki:           { label: "Household key indicators", desc: "Saving rate, real income per capita, net wealth." },
+  prc_hicp_manr:        { label: "Inflation (HICP)", desc: "Consumer-price inflation, annual rate, by component." },
+  irt_st_q:             { label: "Short-term interest rates", desc: "Money-market rates incl. 3-month." },
+  irt_lt_mcby_q:        { label: "Long-term bond yields", desc: "10y government bond yields (Maastricht)." },
+  namq_10_pe:           { label: "Population & employment", desc: "Quarterly population, for per-capita figures." },
+  stg_inflation:        { label: "Inflation — cleaned", desc: "HICP annual rate by COICOP component." },
+  stg_interest_rates:   { label: "Interest rates — cleaned", desc: "Short (3m) + long (10y) rates unified." },
+  stg_household_kpi:    { label: "Household indicators — cleaned", desc: "Saving rate, income, wealth indicators." },
+  stg_household_balance:{ label: "Household balance sheet — cleaned", desc: "Balance sheet by instrument (EUR mn)." },
+  stg_population:       { label: "Population — cleaned", desc: "Quarterly population (thousands)." },
+  mart_household_savings:{ label: "Household savings & income", desc: "Saving rate, real income per capita, net wealth." },
+  mart_household_banking:{ label: "Household banking", desc: "Deposits & debt per capita and balance-sheet share." },
+  mart_household_asset_mix:{ label: "Household asset mix", desc: "Composition of household financial assets (%)." },
+  mart_inflation:       { label: "Inflation breakdown", desc: "Headline + energy/food/services inflation." },
+  mart_cost_of_living:  { label: "Cost-of-living squeeze", desc: "Real income vs inflation vs house prices." },
+  mart_rates_vs_housing:{ label: "Rates vs housing", desc: "Interest rates, house prices, household debt." },
+  gov_10q_ggdebt:       { label: "Government debt (% GDP)", desc: "General government gross debt, quarterly." },
+  gov_10dd_edpt1:       { label: "Government deficit & debt", desc: "Deficit/surplus and debt, % of GDP." },
+  nama_10_lp_ulc:       { label: "Unit labour costs", desc: "Nominal unit labour cost index (2015=100)." },
+  ert_eff_ic_q:         { label: "Effective exchange rates", desc: "Real & nominal effective exchange rates." },
+  stg_gov_debt:         { label: "Government debt — cleaned", desc: "Debt % of GDP, quarterly." },
+  stg_gov_deficit:      { label: "Government deficit — cleaned", desc: "Deficit & debt, annual." },
+  stg_ulc:              { label: "Unit labour costs — cleaned", desc: "ULC index 2015=100." },
+  stg_exch_rates:       { label: "Exchange rates — cleaned", desc: "REER/NEER indices." },
+  mart_sovereign_risk:  { label: "Sovereign risk", desc: "Debt-to-GDP, deficit, 10y bond yield." },
+  mart_competitiveness: { label: "Competitiveness", desc: "Unit labour cost vs effective exchange rate." }
 };
 function meta(code) {
   var n = PIPELINE && (PIPELINE.nodes||[]).find(function(x){return x.name===code;});
@@ -540,11 +567,22 @@ async function loadLineage(){
 }
 
 /* ============================ DASHBOARDS view ============================ */
+// Published Metabase dashboards, one per analytical story. The server's single
+// OPENSNOW_DASHBOARD_URL is merged in as a fallback so this stays configurable.
+var DASHBOARDS = [
+  { name: "Household Banking & Savings", url: "https://metabase.ebdsweden.com/public/dashboard/fce13811-1d02-4ad5-8ec2-bfe39fbfa0fd" },
+  { name: "Cost-of-Living Squeeze",      url: "https://metabase.ebdsweden.com/public/dashboard/3fdc0135-a8c6-49de-a489-ea1b339674ed" },
+  { name: "Rates & Housing",             url: "https://metabase.ebdsweden.com/public/dashboard/021ef534-67e4-4462-bc96-adab6e8ace00" },
+  { name: "Sovereign Risk",              url: "https://metabase.ebdsweden.com/public/dashboard/9cb54c4d-74a6-4b34-8749-d8db6f62dbd1" },
+  { name: "Competitiveness",             url: "https://metabase.ebdsweden.com/public/dashboard/86363897-33ee-4c5b-89cb-68479d03a73c" },
+  { name: "Housing & Growth (overview)", url: "https://metabase.ebdsweden.com/public/dashboard/b132a0da-e387-4d99-b25f-28155b8dec09" }
+];
 async function loadDashboards(){
   var host=document.getElementById("dash-host"), sel=document.getElementById("dash-select"), open=document.getElementById("dash-open");
-  try{ var data=await getPipeline(); }catch(e){ return; }
-  var dashes=data.dashboards||[];
-  if(!dashes.length){ host.innerHTML="<div class='muted-box'>No dashboard configured. Set <code>OPENSNOW_DASHBOARD_URL</code> to a published BI dashboard.</div>";
+  var dashes=DASHBOARDS.slice();
+  try{ var data=await getPipeline(); (data.dashboards||[]).forEach(function(d){
+        if(!dashes.some(function(x){return x.url===d.url;})) dashes.push(d); }); }catch(e){}
+  if(!dashes.length){ host.innerHTML="<div class='muted-box'>No dashboard configured yet.</div>";
     sel.innerHTML=""; open.style.display="none"; return; }
   if(!sel.dataset.init || sel.options.length!==dashes.length){
     sel.innerHTML=""; dashes.forEach(function(d,i){ var o=document.createElement("option"); o.value=i; o.textContent=d.name; sel.appendChild(o); });
