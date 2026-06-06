@@ -2,24 +2,24 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
+    Json, Router,
     extract::State,
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use opensnow_core::{EngineHandle, OpenSnowEngine};
 use opensnow_distributed::{
     DistributedExecutor, LocalWorkerExecutor, PartitionStrategy, WorkerExecutor,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::ingest_buffer::{IngestBuffer, SharedBuffer};
 use crate::metrics::{
     dec_active_queries, dec_warehouse_pending, inc_active_queries, inc_warehouse_pending,
     metrics_handler, record_query,
 };
-use crate::tenant::{tenant_middleware, TenantId};
+use crate::tenant::{TenantId, tenant_middleware};
 
 /// `EngineHandle` is Send + Sync — safe to use as axum Router state.
 pub type AppState = EngineHandle;
@@ -1534,10 +1534,12 @@ mod tenant_tests {
         let body = body_json(resp).await;
         assert_eq!(body["status"], "ok");
         assert_eq!(body["table"], "opensnow_demo_orders");
-        assert!(body["sample_query"]
-            .as_str()
-            .unwrap()
-            .contains("opensnow_demo_orders"));
+        assert!(
+            body["sample_query"]
+                .as_str()
+                .unwrap()
+                .contains("opensnow_demo_orders")
+        );
 
         let resp = router
             .oneshot(
@@ -1686,10 +1688,12 @@ mod tenant_tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = body_json(resp).await;
         assert_eq!(body["status"], "error");
-        assert!(body["message"]
-            .as_str()
-            .unwrap()
-            .contains("read-only result-producing SQL"));
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("read-only result-producing SQL")
+        );
     }
 
     #[tokio::test]
