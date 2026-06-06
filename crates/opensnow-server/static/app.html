@@ -683,10 +683,7 @@ function embedDash(d){
 
 /* ============================ DOCS view ============================ */
 var DOCS=[
-  { id:"getting-started", title:"Getting started", inline:GETTING_STARTED() },
-  { id:"deployment", title:"Deployment", url:"/docs/DEPLOYMENT.md" },
-  { id:"sql", title:"SQL compatibility", url:"/docs/SQL_COMPATIBILITY.md" },
-  { id:"public-test", title:"Public test path", url:"/docs/PUBLIC_TEST_PATH.md" }
+  { id:"getting-started", title:"Getting started", inline:GETTING_STARTED() }
 ];
 var docsInit=false;
 function ensureDocs(){ if(docsInit) return; docsInit=true;
@@ -706,15 +703,16 @@ async function openDoc(i){
 function GETTING_STARTED(){ return [
 "# Using the OpenSnow workspace",
 "",
-"OpenSnow is an open-source, Snowflake-style analytics warehouse written in Rust. This demo runs a full pipeline over public **Eurostat** finance data — ingested into OpenSnow, transformed with **dbt** models that OpenSnow executes on its own engine, then served to BI dashboards.",
+"OpenSnow is an open-source, Snowflake-style analytics warehouse written in Rust. This demo runs a full pipeline over public **Eurostat & ECB** finance data — ingested into OpenSnow, transformed with **dbt** models that OpenSnow executes on its own engine, then served to interactive dashboards.",
 "",
 "## The tabs",
 "",
 "- **Query** — run SQL directly on the OpenSnow engine. Pick a table on the right to preview it; results paginate at 100 rows/page.",
 "- **Pipelines** — the dbt models OpenSnow builds, in dependency order. Click any model to see the exact SQL OpenSnow executed. Run the whole pipeline with one button.",
 "- **Lineage** — every table in the warehouse and what feeds it, across all pipelines: raw sources on the left flowing into the final marts.",
-"- **Dashboards** — published BI dashboards built on the final mart tables.",
-"- **Documentation** — this guide plus deployment and SQL-compatibility references.",
+"- **Dashboards** — BI dashboards built on the final mart tables.",
+"- **Build** — make your own charts with no code: pick a table, choose columns and a chart type, preview, and save.",
+"- **Documentation** — this guide.",
 "",
 "## How the data flows",
 "",
