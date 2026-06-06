@@ -123,10 +123,10 @@ def main():
          {"display": "line",
           "visualization_settings": {"graph.dimensions": ["period", "geo"], "graph.metrics": ["yoy_pct"]}}),
         ("GDP Growth QoQ %",
-         "SELECT geo, (year || '-Q' || quarter) AS period, qoq_pct "
+         "SELECT geo, (year || '-Q' || quarter) AS period, gdp_qoq_pct "
          "FROM eurostat.mart_gdp_growth_qoq WHERE geo IN ('SE','DE','FR','ES','NL','EU27_2020') ORDER BY year, quarter",
          {"display": "line",
-          "visualization_settings": {"graph.dimensions": ["period", "geo"], "graph.metrics": ["qoq_pct"]}}),
+          "visualization_settings": {"graph.dimensions": ["period", "geo"], "graph.metrics": ["gdp_qoq_pct"]}}),
     ]
 
     print("==> creating cards")
