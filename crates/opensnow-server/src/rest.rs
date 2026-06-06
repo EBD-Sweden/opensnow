@@ -2,24 +2,24 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
-    Json, Router,
     extract::State,
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::get,
+    Json, Router,
 };
 use opensnow_core::{EngineHandle, OpenSnowEngine};
 use opensnow_distributed::{
     DistributedExecutor, LocalWorkerExecutor, PartitionStrategy, WorkerExecutor,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::ingest_buffer::{IngestBuffer, SharedBuffer};
 use crate::metrics::{
     dec_active_queries, dec_warehouse_pending, inc_active_queries, inc_warehouse_pending,
     metrics_handler, record_query,
 };
-use crate::tenant::{TenantId, tenant_middleware};
+use crate::tenant::{tenant_middleware, TenantId};
 
 /// `EngineHandle` is Send + Sync — safe to use as axum Router state.
 pub type AppState = EngineHandle;
@@ -29,6 +29,8 @@ pub(crate) const APP_UI: &str = include_str!("../static/app.html");
 const VEGA_JS: &str = include_str!("../static/vendor/vega.min.js");
 const VEGA_LITE_JS: &str = include_str!("../static/vendor/vega-lite.min.js");
 const VEGA_EMBED_JS: &str = include_str!("../static/vendor/vega-embed.min.js");
+// Social-share (OpenGraph) preview image for opensnow.ebdsweden.com.
+const OG_IMAGE: &[u8] = include_bytes!("../static/og-image.png");
 const DEPLOYMENT_DOC: &str = include_str!("../../../docs/DEPLOYMENT.md");
 const SQL_COMPATIBILITY_DOC_BODY: &str = include_str!("../../../docs/SQL_COMPATIBILITY.md");
 const PUBLIC_TEST_PATH_DOC: &str = include_str!("../../../docs/PUBLIC_TEST_PATH.md");
@@ -144,8 +146,18 @@ pub fn create_router_with_auth_and_buffer(
         .route("/docs/PUBLIC_TEST_PATH.md", get(public_test_path_doc))
         // Self-hosted Vega-Lite (no CDN) for the native Build tab.
         .route("/vendor/vega.min.js", get(|| async { js_asset(VEGA_JS) }))
-        .route("/vendor/vega-lite.min.js", get(|| async { js_asset(VEGA_LITE_JS) }))
-        .route("/vendor/vega-embed.min.js", get(|| async { js_asset(VEGA_EMBED_JS) }))
+        .route(
+            "/vendor/vega-lite.min.js",
+            get(|| async { js_asset(VEGA_LITE_JS) }),
+        )
+        .route(
+            "/vendor/vega-embed.min.js",
+            get(|| async { js_asset(VEGA_EMBED_JS) }),
+        )
+        .route(
+            "/og-image.png",
+            get(|| async { ([(header::CONTENT_TYPE, "image/png")], OG_IMAGE).into_response() }),
+        )
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler));
 
@@ -233,7 +245,10 @@ pub(crate) fn ui_asset(file: &str, embedded: &'static str) -> Html<String> {
 
 fn js_asset(body: &'static str) -> Response {
     (
-        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
         body,
     )
         .into_response()
@@ -1290,6 +1305,29 @@ mod tenant_tests {
     }
 
     #[tokio::test]
+    async fn serves_open_graph_image_without_auth() {
+        let resp = make_router()
+            .oneshot(
+                Request::builder()
+                    .uri("/og-image.png")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("image/png")
+        );
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(bytes.len() > 10_000);
+    }
+
+    #[tokio::test]
     async fn list_default_tenant_after_startup() {
         let router = make_router();
         let resp = router
@@ -1492,12 +1530,10 @@ mod tenant_tests {
         let body = body_json(resp).await;
         assert_eq!(body["status"], "ok");
         assert_eq!(body["table"], "opensnow_demo_orders");
-        assert!(
-            body["sample_query"]
-                .as_str()
-                .unwrap()
-                .contains("opensnow_demo_orders")
-        );
+        assert!(body["sample_query"]
+            .as_str()
+            .unwrap()
+            .contains("opensnow_demo_orders"));
 
         let resp = router
             .oneshot(
@@ -1646,12 +1682,10 @@ mod tenant_tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = body_json(resp).await;
         assert_eq!(body["status"], "error");
-        assert!(
-            body["message"]
-                .as_str()
-                .unwrap()
-                .contains("read-only result-producing SQL")
-        );
+        assert!(body["message"]
+            .as_str()
+            .unwrap()
+            .contains("read-only result-producing SQL"));
     }
 
     #[tokio::test]
