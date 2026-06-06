@@ -10,6 +10,7 @@
 )]
 pub mod admin;
 pub mod auth;
+pub mod charts;
 pub mod dbt;
 pub mod ingest_buffer;
 pub mod metrics;

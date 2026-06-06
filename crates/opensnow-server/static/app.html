@@ -171,7 +171,19 @@ svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
   .nav { flex-direction: row; flex-wrap: wrap; }
   .grid-2, .docs-layout { grid-template-columns: 1fr; }
 }
+.bld-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.bld-row label { width:128px; color: var(--text2); font-size:13px; flex:0 0 128px; }
+.bld-row select, .bld-row input { flex:1; min-width:0; }
+.bld-card { border:1px solid var(--border); border-radius:10px; background:var(--bg2); padding:12px; }
+.bld-card h3 { font-size:13px; margin-bottom:8px; display:flex; align-items:center; }
+.bld-card .rm { margin-left:auto; cursor:pointer; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:1px 7px; font-size:12px; }
+.bld-card .rm:hover { color:var(--red); border-color:var(--red); }
+.vega-embed summary { display:none; }
 </style>
+<!-- Vega-Lite for the native chart builder (BSD-licensed). -->
+<script src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@5"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
 </head>
 <body>
 <aside class="sidebar">
@@ -183,6 +195,7 @@ svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
     <a data-tab="pipelines"><span class="ic">⛓</span> Pipelines</a>
     <a data-tab="lineage"><span class="ic">🜺</span> Lineage</a>
     <a data-tab="dashboards"><span class="ic">📊</span> Dashboards</a>
+    <a data-tab="build"><span class="ic">✚</span> Build</a>
     <a data-tab="docs"><span class="ic">📖</span> Documentation</a>
   </nav>
   <div class="side-foot">
@@ -269,6 +282,59 @@ svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
       <a class="badge" id="dash-open" target="_blank" rel="noopener">Open in new tab ↗</a>
     </div>
     <div id="dash-host"><div class="muted-box">No dashboard configured yet.</div></div>
+    <h2 style="margin-top:22px;font-size:15px">Built here <span class="badge">no-code · from the Build tab</span></h2>
+    <div id="dash-custom" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px"></div>
+  </section>
+
+  <!-- ===================== BUILD ===================== -->
+  <section class="view" id="view-build">
+    <div class="grid-2">
+      <div class="panel">
+        <h2>1 · Choose your data</h2>
+        <div class="bld-row"><label>Table</label>
+          <select id="bld-table"></select></div>
+        <div class="bld-row"><label>Chart type</label>
+          <select id="bld-type">
+            <option value="bar">Bar</option>
+            <option value="line">Line</option>
+            <option value="area">Area</option>
+            <option value="point">Scatter</option>
+            <option value="arc">Pie</option>
+            <option value="table">Table</option>
+          </select></div>
+        <h2 style="margin-top:16px">2 · Map columns</h2>
+        <div class="bld-row"><label>X / category</label><select id="bld-x"></select></div>
+        <div class="bld-row"><label>Measure (Y)</label><select id="bld-y"></select></div>
+        <div class="bld-row"><label>Aggregate</label>
+          <select id="bld-agg">
+            <option value="sum">sum</option>
+            <option value="avg">avg</option>
+            <option value="max">max</option>
+            <option value="min">min</option>
+            <option value="count">count</option>
+            <option value="none">none (raw rows)</option>
+          </select></div>
+        <div class="bld-row"><label>Series (optional)</label><select id="bld-series"><option value="">— none —</option></select></div>
+        <div class="bld-row"><label>Row limit</label><input id="bld-limit" type="number" value="500" min="1" style="width:100px"></div>
+        <div class="controls" style="margin-top:14px">
+          <button class="primary" id="bld-run" type="button">Preview</button>
+          <button id="bld-save" type="button">Save to board</button>
+          <button id="bld-sql-btn" type="button">Show SQL</button>
+        </div>
+        <div class="status-bar" id="bld-status"></div>
+        <pre id="bld-sql" style="display:none;background:#080c12;border:1px solid var(--border);border-radius:9px;padding:12px;margin-top:10px;overflow:auto;font-size:12px"></pre>
+      </div>
+      <div class="panel">
+        <h2>Preview</h2>
+        <div id="bld-preview" class="results-wrap" style="min-height:340px;display:flex;align-items:center;justify-content:center;padding:10px"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2>My board <span class="badge" id="bld-board-count"></span>
+        <button class="btn-sm" id="bld-clear" style="float:right">Clear board</button></h2>
+      <p style="color:var(--text2);font-size:12px;margin-bottom:10px">Saved charts (stored in your browser). Each renders live against OpenSnow.</p>
+      <div id="bld-board" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px"></div>
+    </div>
   </section>
 
   <!-- ===================== DOCS ===================== -->
@@ -358,6 +424,7 @@ var TABS = {
   pipelines:  { title: "Pipelines",  desc: "dbt models OpenSnow builds, in dependency order." },
   lineage:    { title: "Lineage",    desc: "Every table and what feeds it." },
   dashboards: { title: "Dashboards", desc: "Published BI dashboards on the final marts." },
+  build:      { title: "Build a chart", desc: "Pick a table, choose columns, get a chart — no SQL required." },
   docs:       { title: "Documentation", desc: "How to use the platform." }
 };
 function show(tab) {
@@ -371,6 +438,7 @@ function show(tab) {
   if (tab==="pipelines") loadPipeline();
   if (tab==="lineage") loadLineage();
   if (tab==="dashboards") loadDashboards();
+  if (tab==="build") ensureBuild();
   if (tab==="docs") ensureDocs();
   if (tab==="query") ensureCatalog();
 }
@@ -591,6 +659,7 @@ var DASHBOARDS = [
 ];
 async function loadDashboards(){
   var host=document.getElementById("dash-host"), sel=document.getElementById("dash-select"), open=document.getElementById("dash-open");
+  var dc=document.getElementById("dash-custom"); if(dc) renderChartsInto(dc, false);  // charts built in the Build tab
   var dashes=DASHBOARDS.slice();
   try{ var data=await getPipeline(); (data.dashboards||[]).forEach(function(d){
         if(!dashes.some(function(x){return x.url===d.url;})) dashes.push(d); }); }catch(e){}
@@ -685,6 +754,127 @@ function mdToHtml(md){
     out.push("<p>"+inline(para.join(" "))+"</p>");
   }
   return out.join("\n");
+}
+
+/* ============================ BUILD view (native Vega-Lite chart builder) ============================ */
+var buildInit=false, bldColsCache={};
+var VL_CONFIG={ background:"transparent",
+  axis:{labelColor:"#8b949e",titleColor:"#8b949e",gridColor:"#21262d",domainColor:"#30363d"},
+  legend:{labelColor:"#8b949e",titleColor:"#8b949e"}, view:{stroke:"transparent"},
+  title:{color:"#e6edf3"}, range:{category:["#58a6ff","#3fb950","#bc8cff","#d29922","#f85149","#1f6feb","#39c5cf"]} };
+
+async function queryRows(sql){
+  var data=await fetchJson("/api/v1/query",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sql:sql})});
+  if(data.status!=="ok") throw new Error(data.message||"query error");
+  return (data.data||"").split("\n").filter(function(l){return l.trim();}).map(function(l){return JSON.parse(l);});
+}
+function bldEl(id){ return document.getElementById(id); }
+
+async function ensureBuild(){
+  if(buildInit){ return; } buildInit=true;
+  // table list = sources + staging + marts, friendly-labelled
+  try{ var data=await getPipeline(); }catch(e){ bldEl("bld-status").textContent="Could not load tables."; return; }
+  var sel=bldEl("bld-table"); sel.innerHTML="";
+  (data.nodes||[]).slice().sort(function(a,b){return a.name<b.name?-1:1;}).forEach(function(n){
+    var o=document.createElement("option"); o.value=n.name; o.textContent=meta(n.name).label+"  ("+n.name+")"; sel.appendChild(o);
+  });
+  sel.onchange=loadBuildColumns;
+  bldEl("bld-type").onchange=function(){ };
+  bldEl("bld-run").onclick=runBuildPreview;
+  bldEl("bld-save").onclick=saveToBoard;
+  bldEl("bld-sql-btn").onclick=function(){ var p=bldEl("bld-sql"); p.style.display=p.style.display==="none"?"block":"none"; p.textContent=buildSql(); };
+  bldEl("bld-clear").onclick=async function(){ var b=await fetchCharts(); for(var i=0;i<b.length;i++){ await fetch("/api/v1/charts/"+encodeURIComponent(b[i].id),{method:"DELETE"}); } renderBoard(); };
+  await loadBuildColumns();
+  renderBoard();
+}
+
+async function loadBuildColumns(){
+  var t=bldEl("bld-table").value; if(!t) return;
+  var cols=bldColsCache[t];
+  if(!cols){
+    try{ var rows=await queryRows("SELECT * FROM "+t+" LIMIT 1"); cols=rows.length?Object.keys(rows[0]):[]; bldColsCache[t]=cols; }
+    catch(e){ cols=[]; }
+  }
+  ["bld-x","bld-y","bld-series"].forEach(function(id){
+    var s=bldEl(id), keep=id==="bld-series"; s.innerHTML = keep?"<option value=''>— none —</option>":"";
+    cols.forEach(function(c){ var o=document.createElement("option"); o.value=c; o.textContent=c; s.appendChild(o); });
+  });
+  // sensible defaults: x=first text-ish col, y=first numeric-ish col
+  if(cols.length){ bldEl("bld-x").value=cols[0]; bldEl("bld-y").value=cols[cols.length-1]; }
+}
+
+function buildSql(){
+  var t=bldEl("bld-table").value, type=bldEl("bld-type").value,
+      x=bldEl("bld-x").value, y=bldEl("bld-y").value, agg=bldEl("bld-agg").value,
+      series=bldEl("bld-series").value, limit=parseInt(bldEl("bld-limit").value,10)||500;
+  if(type==="table") return "SELECT * FROM "+t+" LIMIT "+limit;
+  var ycol = agg==="count" ? "count(*)" : (agg==="none" ? y : agg+"("+y+")");
+  var cols = x+" AS x, "+ycol+" AS y" + (series?(", "+series+" AS series"):"");
+  var sql = "SELECT "+cols+" FROM "+t+" WHERE "+x+" IS NOT NULL";
+  if(agg!=="none" && agg!=="count") sql+=" AND "+y+" IS NOT NULL";
+  if(agg!=="none") sql+=" GROUP BY "+x+(series?(", "+series):"");
+  sql += (type==="line"||type==="area"||type==="point") ? " ORDER BY 1" : " ORDER BY 2 DESC";
+  return sql+" LIMIT "+limit;
+}
+
+function vlSpec(type, rows, hasSeries, xTitle, yTitle){
+  var numeric = rows.every(function(r){ return r.x===null||r.x===undefined||!isNaN(parseFloat(r.x)); });
+  var xType = (type==="line"||type==="area"||type==="point") ? (numeric?"quantitative":"ordinal") : "nominal";
+  var enc;
+  if(type==="arc"){ enc={ theta:{field:"y",type:"quantitative",title:yTitle}, color:{field:"x",type:"nominal",title:xTitle} }; }
+  else { enc={ x:{field:"x",type:xType,title:xTitle}, y:{field:"y",type:"quantitative",title:yTitle} };
+         if(hasSeries) enc.color={field:"series",type:"nominal"}; }
+  return { $schema:"https://vega.github.io/schema/vega-lite/v5.json", data:{values:rows},
+    mark:{type:type, tooltip:true, point:(type==="line")}, width:"container", height:300,
+    encoding:enc, config:VL_CONFIG };
+}
+
+function renderChart(container, type, rows, hasSeries, titles){
+  container.innerHTML="";
+  if(!rows.length){ container.innerHTML="<div class='muted-box'>No rows.</div>"; return; }
+  if(type==="table"){
+    var keys=Object.keys(rows[0]); var h="<table class='data'><thead><tr>"+keys.map(function(k){return "<th>"+esc(k)+"</th>";}).join("")+"</tr></thead><tbody>";
+    h+=rows.slice(0,200).map(function(r){return "<tr>"+keys.map(function(k){return "<td>"+esc(r[k]==null?"":r[k])+"</td>";}).join("")+"</tr>";}).join("");
+    container.innerHTML=h+"</tbody></table>"; return;
+  }
+  if(typeof vegaEmbed==="undefined"){ container.innerHTML="<div class='muted-box'>Charting library still loading — retry in a moment.</div>"; return; }
+  var div=document.createElement("div"); div.style.width="100%"; container.appendChild(div);
+  vegaEmbed(div, vlSpec(type,rows,hasSeries,titles.x,titles.y), {actions:false, renderer:"svg"}).catch(function(e){
+    container.innerHTML="<div class='error'>"+esc(String(e))+"</div>"; });
+}
+
+async function runBuildPreview(){
+  var sql=buildSql(), type=bldEl("bld-type").value, hasSeries=!!bldEl("bld-series").value;
+  bldEl("bld-sql").textContent=sql; setBld("Running…","warn");
+  try{ var rows=await queryRows(sql);
+    renderChart(bldEl("bld-preview"), type, rows, hasSeries, {x:bldEl("bld-x").value,y:bldEl("bld-y").value});
+    setBld(rows.length+" rows","ok");
+  }catch(e){ setBld("Error: "+e.message,"err"); bldEl("bld-preview").innerHTML="<div class='error'>"+esc(e.message)+"</div>"; }
+}
+function setBld(t,c){ var s=bldEl("bld-status"); s.textContent=t; s.className="status-bar "+(c||""); }
+
+// Charts persist server-side (/api/v1/charts) so they're shared + LLM-visible.
+async function fetchCharts(){ try{ return (await fetchJson("/api/v1/charts")).charts||[]; }catch(e){ return []; } }
+async function renderChartsInto(host, withRemove){
+  var b=await fetchCharts(); host.innerHTML="";
+  if(!b.length){ host.innerHTML="<div class='muted-box'>No saved charts yet — build one in the Build tab and click “Save to board”.</div>"; return 0; }
+  b.forEach(function(spec){
+    var card=document.createElement("div"); card.className="bld-card";
+    card.innerHTML="<h3>"+esc(spec.title)+(withRemove?"<span class='rm' data-id='"+esc(spec.id)+"'>remove ✕</span>":"")+"</h3><div class='cc'></div>";
+    host.appendChild(card);
+    queryRows(spec.sql).then(function(rows){ renderChart(card.querySelector(".cc"), spec.type, rows, spec.hasSeries, {x:spec.x,y:spec.y}); })
+      .catch(function(e){ card.querySelector(".cc").innerHTML="<div class='error'>"+esc(e.message)+"</div>"; });
+  });
+  if(withRemove) host.querySelectorAll(".rm").forEach(function(el){ el.onclick=async function(){ await fetch("/api/v1/charts/"+encodeURIComponent(el.dataset.id),{method:"DELETE"}); renderBoard(); if(typeof loadDashboards==='function'){} }; });
+  return b.length;
+}
+async function renderBoard(){ var n=await renderChartsInto(bldEl("bld-board"), true); bldEl("bld-board-count").textContent=n; }
+async function saveToBoard(){
+  var spec={ title: bldEl("bld-type").value.toUpperCase()+" · "+meta(bldEl("bld-table").value).label,
+    type:bldEl("bld-type").value, table:bldEl("bld-table").value, hasSeries:!!bldEl("bld-series").value,
+    x:bldEl("bld-x").value, y:bldEl("bld-y").value, sql:buildSql() };
+  try{ await fetchJson("/api/v1/charts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(spec)}); setBld("Saved ↓","ok"); renderBoard(); }
+  catch(e){ setBld("Save failed: "+e.message,"err"); }
 }
 
 /* ============================ boot ============================ */

@@ -264,6 +264,30 @@ impl McpServer {
                     "inputSchema": { "type": "object", "properties": {} }
                 },
                 {
+                    "name": "chart_list",
+                    "description": "List saved native-Build charts (rendered in OpenSnow's Dashboards tab).",
+                    "inputSchema": { "type": "object", "properties": {} }
+                },
+                {
+                    "name": "chart_create",
+                    "description": "Create a saved chart on OpenSnow's native Build board (Vega-Lite, no Metabase). Generates SQL from fields if 'sql' omitted.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "title": { "type": "string" },
+                            "table": { "type": "string", "description": "Source table/mart" },
+                            "type": { "type": "string", "enum": ["bar", "line", "area", "point", "arc", "table"] },
+                            "x": { "type": "string", "description": "X / category column" },
+                            "y": { "type": "string", "description": "Measure column" },
+                            "agg": { "type": "string", "enum": ["sum", "avg", "max", "min", "count", "none"] },
+                            "series": { "type": "string", "description": "Optional breakout column" },
+                            "limit": { "type": "integer" },
+                            "sql": { "type": "string", "description": "Optional explicit SQL (overrides generated)" }
+                        },
+                        "required": ["title"]
+                    }
+                },
+                {
                     "name": "dashboard_create",
                     "description": "Create a published Metabase dashboard from native-SQL cards (over the Postgres serving DB). Returns the public URL. Each card: {title, sql, display(bar|line|table|scatter), dimensions[], metrics[], stacked?}.",
                     "inputSchema": {
@@ -427,7 +451,7 @@ impl McpServer {
             "schema_introspect" | "query_history" | "migration_planner" | "refactor_test"
             | "dbt_list_models" | "dbt_get_model" | "dbt_write_model" | "dbt_delete_model"
             | "pipeline_run" | "pipeline_status" | "schedule_get" | "schedule_set"
-            | "dashboard_list" | "dashboard_create" => {
+            | "dashboard_list" | "dashboard_create" | "chart_list" | "chart_create" => {
                 let mut ctx = AgentContext::new(Arc::clone(&self.engine), "default", None);
                 let runtime = build_runtime();
 

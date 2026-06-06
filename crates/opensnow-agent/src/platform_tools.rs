@@ -574,3 +574,114 @@ impl Tool for DashboardCreateTool {
         }))
     }
 }
+
+// ── native chart tools (OpenSnow Build tab) ────────────────────────────────
+
+fn opensnow_base() -> String {
+    std::env::var("OPENSNOW_HTTP")
+        .unwrap_or_else(|_| "http://localhost:8080".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn os_call(method: &str, path: &str, body: Option<Value>) -> Result<Value> {
+    let url = format!("{}{}", opensnow_base(), path);
+    let req = ureq::request(method, &url).set("content-type", "application/json");
+    let resp = match body {
+        Some(b) => req.send_json(b),
+        None => req.call(),
+    };
+    match resp {
+        Ok(r) => Ok(r.into_json::<Value>().unwrap_or_else(|_| json!({}))),
+        Err(ureq::Error::Status(code, r)) => {
+            let t = r.into_string().unwrap_or_default();
+            Err(anyhow!("opensnow {method} {path} -> {code}: {}", &t[..t.len().min(200)]))
+        }
+        Err(e) => Err(anyhow!("opensnow request failed: {e}")),
+    }
+}
+
+/// Build the same SELECT the Build tab generates, from declarative fields.
+fn build_chart_sql(table: &str, ctype: &str, x: &str, y: &str, agg: &str, series: &str, limit: u64) -> String {
+    if ctype == "table" {
+        return format!("SELECT * FROM {table} LIMIT {limit}");
+    }
+    let ycol = match agg {
+        "count" => "count(*)".to_string(),
+        "none" => y.to_string(),
+        a => format!("{a}({y})"),
+    };
+    let mut cols = format!("{x} AS x, {ycol} AS y");
+    if !series.is_empty() {
+        cols.push_str(&format!(", {series} AS series"));
+    }
+    let mut sql = format!("SELECT {cols} FROM {table} WHERE {x} IS NOT NULL");
+    if agg != "none" && agg != "count" {
+        sql.push_str(&format!(" AND {y} IS NOT NULL"));
+    }
+    if agg != "none" {
+        sql.push_str(&format!(" GROUP BY {x}"));
+        if !series.is_empty() {
+            sql.push_str(&format!(", {series}"));
+        }
+    }
+    sql.push_str(if matches!(ctype, "line" | "area" | "point") {
+        " ORDER BY 1"
+    } else {
+        " ORDER BY 2 DESC"
+    });
+    format!("{sql} LIMIT {limit}")
+}
+
+/// List saved native-Build charts.
+pub struct ChartListTool;
+
+#[async_trait::async_trait(?Send)]
+impl Tool for ChartListTool {
+    fn name(&self) -> &'static str {
+        "chart_list"
+    }
+    async fn invoke(&self, _ctx: &mut AgentContext, _params: Value) -> Result<Value> {
+        os_call("GET", "/api/v1/charts", None)
+    }
+}
+
+/// Create a saved chart on OpenSnow's native Build board.
+///
+/// Params: `{ title, table, type(bar|line|area|point|arc|table), x, y,
+/// agg(sum|avg|max|min|count|none), series?, limit?, sql? }`. If `sql` is
+/// omitted it is generated from the fields. Renders in the Dashboards tab.
+pub struct ChartCreateTool;
+
+#[async_trait::async_trait(?Send)]
+impl Tool for ChartCreateTool {
+    fn name(&self) -> &'static str {
+        "chart_create"
+    }
+    async fn invoke(&self, _ctx: &mut AgentContext, params: Value) -> Result<Value> {
+        let title = str_param(&params, "title")?;
+        let ctype = params.get("type").and_then(Value::as_str).unwrap_or("bar");
+        let x = params.get("x").and_then(Value::as_str).unwrap_or("");
+        let y = params.get("y").and_then(Value::as_str).unwrap_or("");
+        let agg = params.get("agg").and_then(Value::as_str).unwrap_or("sum");
+        let series = params.get("series").and_then(Value::as_str).unwrap_or("");
+        let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(500);
+        let table = params.get("table").and_then(Value::as_str).unwrap_or("");
+
+        let sql = match params.get("sql").and_then(Value::as_str) {
+            Some(s) if !s.trim().is_empty() => s.to_string(),
+            _ => {
+                if table.is_empty() || (ctype != "table" && (x.is_empty() || y.is_empty())) {
+                    return Err(anyhow!("provide 'sql', or 'table' + 'x' + 'y' to generate it"));
+                }
+                build_chart_sql(table, ctype, x, y, agg, series, limit)
+            }
+        };
+        let spec = json!({
+            "title": title, "type": ctype, "table": table,
+            "x": x, "y": y, "series": series,
+            "hasSeries": !series.is_empty(), "sql": sql,
+        });
+        os_call("POST", "/api/v1/charts", Some(spec))
+    }
+}

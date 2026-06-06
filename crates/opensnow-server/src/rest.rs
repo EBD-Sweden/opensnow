@@ -198,6 +198,8 @@ pub fn create_router_with_auth_and_buffer(
         // Pipeline/lineage view (public read-only) + admin-scoped run trigger.
         .merge(pipeline_public)
         .merge(pipeline_admin)
+        // Saved chart/dashboard specs for the native Build tab (file-backed).
+        .merge(crate::charts::router())
         .merge(ingest_batch_routes)
         .merge(ingest_status_routes)
         // Tenant resolution runs for every request — public and protected.

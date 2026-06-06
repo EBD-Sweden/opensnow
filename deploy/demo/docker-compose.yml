@@ -34,6 +34,8 @@ services:
       OPENSNOW_QUERY_TIMEOUT_SECS: "20"
       # Serve the UI from disk so HTML can be hot-swapped without an image rebuild.
       OPENSNOW_UI_DIR: /ui
+      # Where the native Build tab persists saved chart/dashboard specs.
+      OPENSNOW_CHARTS_FILE: /data/charts.json
     volumes:
       - ./opensnow.demo.toml:/etc/opensnow/opensnow.toml:ro
       - ../../crates/opensnow-server/static:/ui:ro
