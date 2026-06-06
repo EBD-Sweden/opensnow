@@ -4,8 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension, params};
-use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fmt;
 use std::process::Command;
@@ -483,7 +483,9 @@ impl TrustedSecretStore {
                 },
             )
             .map_err(|_| {
-                anyhow!("failed to open sealed secret: authentication failed (tampered or wrong key)")
+                anyhow!(
+                    "failed to open sealed secret: authentication failed (tampered or wrong key)"
+                )
             })?;
         String::from_utf8(plain).context("sealed secret payload is not UTF-8")
     }
@@ -710,7 +712,10 @@ mod tests {
     fn aead_seal_unseal_round_trips() {
         let store = new_store("unit-test-master-key");
         let sealed = store.seal("super-secret-value").expect("seal");
-        assert!(sealed.starts_with("v1."), "payload must be versioned: {sealed}");
+        assert!(
+            sealed.starts_with("v1."),
+            "payload must be versioned: {sealed}"
+        );
         assert!(
             !sealed.contains("super-secret-value"),
             "plaintext must not appear in sealed payload"

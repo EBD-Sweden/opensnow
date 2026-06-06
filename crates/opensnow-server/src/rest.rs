@@ -1447,7 +1447,7 @@ mod tenant_tests {
     }
 
     #[tokio::test]
-    async fn browser_demo_html_exposes_external_tester_onboarding() {
+    async fn browser_demo_html_is_public_facing() {
         let router = make_router();
         let resp = router
             .oneshot(Request::get("/").body(Body::empty()).unwrap())
@@ -1457,29 +1457,33 @@ mod tenant_tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(bytes.to_vec()).unwrap();
 
+        // Public-facing console + workspace tabs are present.
         for required in [
-            "Start here",
-            "Connection status",
-            "Load demo data",
-            "<label for=\"sql\">SQL editor</label>",
+            "OpenSnow",
+            "SQL console",
             "sample-query",
-            "pgwire is disabled by default for public demos",
-            "--enable-pgwire",
-            "[server].pg_enabled=true",
-            "OPENSNOW_ENABLE_PGWIRE=1",
-            "psql -h localhost -p 5433",
-            "curl http://localhost:8080/api/v1/query",
-            "docs/DEPLOYMENT.md",
+            "<textarea id=\"sql\"",
+            "data-tab=\"build\"",
         ] {
             assert!(
                 html.contains(required),
-                "missing browser onboarding text: {required}"
+                "missing public console element: {required}"
             );
         }
-        assert!(
-            !html.contains("psql -h localhost -p 5432"),
-            "browser onboarding must not advertise the old pgwire port 5432"
-        );
+        // Internal/operator copy must NOT leak onto the public demo.
+        for forbidden in [
+            "pgwire is disabled by default",
+            "--enable-pgwire",
+            "OPENSNOW_ENABLE_PGWIRE",
+            "psql -h localhost",
+            "curl http://localhost:8080/api/v1/query",
+            "external tester",
+        ] {
+            assert!(
+                !html.contains(forbidden),
+                "internal copy leaked to public demo: {forbidden}"
+            );
+        }
     }
 
     #[tokio::test]

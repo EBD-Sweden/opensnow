@@ -172,12 +172,14 @@ jobs:
             | grep -v "Downloading\|Downloaded\|Compiling\|Locking" \
             | grep -E "^[a-z]" | grep -v "^\s" | sort -u || true)
 
-          # Known/accepted duplicates — transitive, controlled by Arrow/DataFusion ecosystem
+          # Known/accepted duplicates — transitive, controlled by Arrow/DataFusion ecosystem.
+          # num-traits/ordered-float come from arrow; phf/phf_shared/webpki-roots from ureq/rustls.
           KNOWN="axum tower bitflags hashbrown rand rand_core rand_chacha getrandom \
                  thiserror thiserror-impl indexmap itertools fallible-iterator \
                  serde_json serde_core prost prost-types tonic axum-core \
                  chrono matchit socket2 log twox-hash untrusted tokio \
-                 petgraph datafusion-common datafusion-expr"
+                 petgraph datafusion-common datafusion-expr \
+                 num-traits ordered-float phf phf_shared webpki-roots"
 
           FAIL=0
           while IFS= read -r line; do

@@ -17,17 +17,12 @@ fn should_bind_pgwire(pg_enabled: bool, auth_enabled: bool) -> bool {
 /// Build a tokio-rustls `TlsAcceptor` from PEM cert/key files for the pgwire
 /// listener. Uses the same rustls/aws-lc-rs provider that pgwire and
 /// axum-server compile in, so there is no process-level provider mismatch.
-fn build_pg_tls_acceptor(
-    cert_path: &str,
-    key_path: &str,
-) -> Result<tokio_rustls::TlsAcceptor> {
+fn build_pg_tls_acceptor(cert_path: &str, key_path: &str) -> Result<tokio_rustls::TlsAcceptor> {
     use std::io::BufReader;
     use std::sync::Arc;
 
-    let cert_file = std::fs::File::open(cert_path)
-        .with_context_path("TLS cert", cert_path)?;
-    let key_file = std::fs::File::open(key_path)
-        .with_context_path("TLS key", key_path)?;
+    let cert_file = std::fs::File::open(cert_path).with_context_path("TLS cert", cert_path)?;
+    let key_file = std::fs::File::open(key_path).with_context_path("TLS key", key_path)?;
 
     let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -38,7 +33,9 @@ fn build_pg_tls_acceptor(
 
     let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
         .map_err(|e| anyhow::anyhow!("failed to parse pgwire TLS key PEM: {e}"))?
-        .ok_or_else(|| anyhow::anyhow!("pgwire TLS key file '{key_path}' contained no private key"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("pgwire TLS key file '{key_path}' contained no private key")
+        })?;
 
     let config = tokio_rustls::rustls::ServerConfig::builder()
         .with_no_client_auth()
