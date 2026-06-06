@@ -38,12 +38,10 @@ fn models_dir() -> Result<PathBuf> {
 }
 
 fn artifacts_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("OPENSNOW_DBT_ARTIFACTS_DIR") {
-        if !dir.trim().is_empty() {
-            return Ok(PathBuf::from(dir));
-        }
+    match std::env::var("OPENSNOW_DBT_ARTIFACTS_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => Ok(PathBuf::from(dir)),
+        _ => Ok(project_dir()?.join("target")),
     }
-    Ok(project_dir()?.join("target"))
 }
 
 /// Model names map 1:1 to `<name>.sql`; keep them filesystem-safe.
