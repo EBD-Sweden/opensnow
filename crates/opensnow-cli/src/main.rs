@@ -876,6 +876,13 @@ pg_enabled = false
 # unauthenticated public listener.
 host = "127.0.0.1"
 
+# Opt-in transport TLS (rustls). Disabled by default so the local/demo path
+# stays plaintext. When enabled, the HTTP listener terminates TLS in-process.
+# [server.tls]
+# enabled = true
+# cert_path = "/etc/opensnow/tls/server.crt"  # PEM cert (full chain)
+# key_path  = "/etc/opensnow/tls/server.key"  # PEM private key (PKCS#8 or RSA)
+
 [storage]
 warehouse_path = "~/.opensnow/warehouse"
 # Uncomment for S3/MinIO:
@@ -946,6 +953,9 @@ path = "~/.opensnow/catalog.db"
             let pg = pg_port.unwrap_or(config.server.pg_port);
             let pg_enabled = enable_pgwire || config.server.pg_enabled;
             let host = config.server.host.clone();
+            // Opt-in transport TLS: resolved cert/key paths when [server.tls]
+            // is enabled; fails closed if enabled but misconfigured.
+            let tls = config.server.tls.resolved()?;
 
             let engine = create_engine(&config)?;
             register_warehouse_tables(&engine).await?;
@@ -966,13 +976,16 @@ path = "~/.opensnow/catalog.db"
                     // Start HTTP + PG server using the same engine
                     let engine_inner = create_engine(&config)?;
                     register_warehouse_tables(&engine_inner).await?;
-                    let server = OpenSnowServer::new_with_options(
+                    let mut server = OpenSnowServer::new_with_options(
                         engine_inner,
                         host.clone(),
                         http,
                         pg,
                         pg_enabled,
                     );
+                    if let Some((cert, key)) = tls.clone() {
+                        server = server.with_tls(cert, key);
+                    }
                     server.run().await?;
                 }
                 "worker" => {
@@ -999,8 +1012,11 @@ path = "~/.opensnow/catalog.db"
                     // Standalone mode (default) — no distributed coordination
                     let engine = create_engine(&config)?;
                     register_warehouse_tables(&engine).await?;
-                    let server =
+                    let mut server =
                         OpenSnowServer::new_with_options(engine, host, http, pg, pg_enabled);
+                    if let Some((cert, key)) = tls.clone() {
+                        server = server.with_tls(cert, key);
+                    }
                     server.run().await?;
                 }
             }

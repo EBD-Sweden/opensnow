@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use opensnow_core::{EngineHandle, OpenSnowEngine};
 use tokio::net::TcpListener;
 use tracing::info;
@@ -12,6 +12,51 @@ use crate::telemetry;
 fn should_bind_pgwire(pg_enabled: bool, auth_enabled: bool) -> bool {
     let _ = auth_enabled;
     pg_enabled
+}
+
+/// Build a tokio-rustls `TlsAcceptor` from PEM cert/key files for the pgwire
+/// listener. Uses the same rustls/aws-lc-rs provider that pgwire and
+/// axum-server compile in, so there is no process-level provider mismatch.
+fn build_pg_tls_acceptor(
+    cert_path: &str,
+    key_path: &str,
+) -> Result<tokio_rustls::TlsAcceptor> {
+    use std::io::BufReader;
+    use std::sync::Arc;
+
+    let cert_file = std::fs::File::open(cert_path)
+        .with_context_path("TLS cert", cert_path)?;
+    let key_file = std::fs::File::open(key_path)
+        .with_context_path("TLS key", key_path)?;
+
+    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| anyhow::anyhow!("failed to parse pgwire TLS cert PEM: {e}"))?;
+    if certs.is_empty() {
+        anyhow::bail!("pgwire TLS cert file '{cert_path}' contained no certificates");
+    }
+
+    let key = rustls_pemfile::private_key(&mut BufReader::new(key_file))
+        .map_err(|e| anyhow::anyhow!("failed to parse pgwire TLS key PEM: {e}"))?
+        .ok_or_else(|| anyhow::anyhow!("pgwire TLS key file '{key_path}' contained no private key"))?;
+
+    let config = tokio_rustls::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| anyhow::anyhow!("invalid pgwire TLS cert/key: {e}"))?;
+
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// Tiny helper to attach a path to file-open errors without pulling in extra deps.
+trait ContextPath<T> {
+    fn with_context_path(self, what: &str, path: &str) -> Result<T>;
+}
+
+impl<T> ContextPath<T> for std::io::Result<T> {
+    fn with_context_path(self, what: &str, path: &str) -> Result<T> {
+        self.with_context(|| format!("failed to open {what} file '{path}'"))
+    }
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -50,6 +95,9 @@ pub struct OpenSnowServer {
     http_port: u16,
     pg_port: u16,
     pg_enabled: bool,
+    /// Optional (cert_path, key_path) for in-process TLS on the HTTP listener.
+    /// `None` keeps the plaintext default.
+    tls: Option<(String, String)>,
 }
 
 impl OpenSnowServer {
@@ -79,7 +127,15 @@ impl OpenSnowServer {
             http_port,
             pg_port,
             pg_enabled,
+            tls: None,
         }
+    }
+
+    /// Enable in-process TLS on the HTTP listener using PEM cert/key files.
+    /// Builder-style and additive; without this call the listener is plaintext.
+    pub fn with_tls(mut self, cert_path: impl Into<String>, key_path: impl Into<String>) -> Self {
+        self.tls = Some((cert_path.into(), key_path.into()));
+        self
     }
 
     pub fn pgwire_enabled(&self) -> bool {
@@ -123,16 +179,39 @@ impl OpenSnowServer {
         let http_host = bind_host.clone();
         let http_auth = auth.clone();
         let http_buffer = ingest_buffer.clone();
+        let http_tls = self.tls.clone();
         let http_task = tokio::spawn(async move {
             let app =
                 rest::create_router_with_auth_and_buffer(http_handle_clone, http_auth, http_buffer);
-            let listener = TcpListener::bind(format!("{http_host}:{http_port}"))
-                .await
-                .expect("Failed to bind HTTP port");
-            info!("REST API listening on http://{}:{}", http_host, http_port);
-            axum::serve(listener, app)
-                .await
-                .expect("HTTP server failed");
+            let addr: std::net::SocketAddr = format!("{http_host}:{http_port}")
+                .parse()
+                .expect("invalid HTTP bind address");
+            match http_tls {
+                Some((cert_path, key_path)) => {
+                    // Opt-in rustls TLS termination in-process via axum-server.
+                    let tls_config =
+                        axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
+                            .await
+                            .expect("failed to load TLS cert/key (check [server.tls] paths)");
+                    info!(
+                        "REST API listening on https://{}:{} (TLS enabled)",
+                        http_host, http_port
+                    );
+                    axum_server::bind_rustls(addr, tls_config)
+                        .serve(app.into_make_service())
+                        .await
+                        .expect("HTTPS server failed");
+                }
+                None => {
+                    let listener = TcpListener::bind(addr)
+                        .await
+                        .expect("Failed to bind HTTP port");
+                    info!("REST API listening on http://{}:{}", http_host, http_port);
+                    axum::serve(listener, app)
+                        .await
+                        .expect("HTTP server failed");
+                }
+            }
         });
 
         // PostgreSQL wire protocol is disabled by default for public demos. When
@@ -146,21 +225,35 @@ impl OpenSnowServer {
             let pg_handle_clone = handle.clone();
             let pg_auth = auth.clone();
             let pg_host = bind_host.clone();
+            // Build the optional pgwire TLS acceptor up front so a bad cert/key
+            // fails the server start rather than failing per-connection.
+            let pg_tls_acceptor = match &self.tls {
+                Some((cert, key)) => Some(Arc::new(build_pg_tls_acceptor(cert, key)?)),
+                None => None,
+            };
             Some(tokio::spawn(async move {
                 let factory = Arc::new(OpenSnowPgFactory::new(pg_handle_clone, pg_auth));
                 let listener = TcpListener::bind(format!("{pg_host}:{pg_port}"))
                     .await
                     .expect("Failed to bind PG port");
-                info!("PostgreSQL protocol listening on {}:{}", pg_host, pg_port);
+                if pg_tls_acceptor.is_some() {
+                    info!(
+                        "PostgreSQL protocol listening on {}:{} (TLS enabled)",
+                        pg_host, pg_port
+                    );
+                } else {
+                    info!("PostgreSQL protocol listening on {}:{}", pg_host, pg_port);
+                }
                 info!("Connect with: psql -h localhost -p {}", pg_port);
 
                 loop {
                     match listener.accept().await {
                         Ok((socket, addr)) => {
                             let factory = factory.clone();
+                            let tls = pg_tls_acceptor.clone();
                             tokio::spawn(async move {
                                 if let Err(e) =
-                                    pgwire::tokio::process_socket(socket, None, factory).await
+                                    pgwire::tokio::process_socket(socket, tls, factory).await
                                 {
                                     tracing::error!("PG connection error from {}: {}", addr, e);
                                 }

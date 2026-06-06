@@ -27,6 +27,15 @@ rusqlite.workspace = true
 argon2 = "0.5"
 pgwire = "0.28"
 tokio-postgres = "0.7"
+# Opt-in transport TLS for the axum HTTP listener (rustls, matching the rustls
+# already used for outbound reqwest). axum-server provides a rustls-backed
+# acceptor compatible with axum 0.8 / rustls 0.23.
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+# pgwire's default feature already compiles in rustls (aws-lc-rs provider); these
+# build a tokio-rustls acceptor for the pgwire listener using the same provider,
+# so there is no crypto-provider mismatch with axum-server.
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
 async-trait = "0.1"
 futures = "0.3"
 prometheus = "0.13"

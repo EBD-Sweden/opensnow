@@ -19,6 +19,50 @@ pub struct ServerConfig {
     pub pg_port: u16,
     pub pg_enabled: bool,
     pub host: String,
+    /// Opt-in transport TLS. Disabled by default so the plaintext local/demo
+    /// path is unchanged; when enabled the HTTP (and, where supported, pgwire)
+    /// listeners terminate TLS in-process using the configured cert/key.
+    pub tls: TlsConfig,
+}
+
+/// rustls-based transport TLS configuration. Opt-in via `[server.tls]`.
+///
+/// Example `opensnow.toml`:
+/// ```toml
+/// [server.tls]
+/// enabled = true
+/// cert_path = "/etc/opensnow/tls/server.crt"  # PEM cert (chain) file
+/// key_path  = "/etc/opensnow/tls/server.key"  # PEM private key (PKCS#8 or RSA)
+/// ```
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct TlsConfig {
+    /// Master switch. When false, listeners stay plaintext (default).
+    pub enabled: bool,
+    /// Path to a PEM-encoded certificate (full chain) file.
+    pub cert_path: String,
+    /// Path to a PEM-encoded private key (PKCS#8 or RSA) file.
+    pub key_path: String,
+}
+
+impl TlsConfig {
+    /// Returns the validated cert/key paths when TLS is enabled and both paths
+    /// are set, or `None` when TLS is disabled. Errors if enabled but
+    /// misconfigured so deployments fail closed rather than silently fall back
+    /// to plaintext.
+    pub fn resolved(&self) -> anyhow::Result<Option<(String, String)>> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        let cert = self.cert_path.trim();
+        let key = self.key_path.trim();
+        if cert.is_empty() || key.is_empty() {
+            anyhow::bail!(
+                "[server.tls].enabled=true requires both cert_path and key_path to be set"
+            );
+        }
+        Ok(Some((cert.to_string(), key.to_string())))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +98,7 @@ impl Default for ServerConfig {
             // OPENSNOW_SERVER_HOST) to "0.0.0.0" to expose the listeners, which
             // requires authentication or an explicit OPENSNOW_ALLOW_PUBLIC=1.
             host: "127.0.0.1".to_string(),
+            tls: TlsConfig::default(),
         }
     }
 }
@@ -91,6 +136,41 @@ mod tests {
         let config = OpenSnowConfig::default();
 
         assert!(!config.server.pg_enabled);
+    }
+
+    #[test]
+    fn tls_disabled_by_default_keeps_plaintext() {
+        let config = OpenSnowConfig::default();
+        assert!(!config.server.tls.enabled);
+        assert!(config.server.tls.resolved().expect("ok").is_none());
+    }
+
+    #[test]
+    fn tls_enabled_requires_cert_and_key_paths() {
+        let config: OpenSnowConfig = toml::from_str(
+            r#"
+            [server.tls]
+            enabled = true
+            "#,
+        )
+        .expect("config should parse");
+        assert!(config.server.tls.resolved().is_err());
+    }
+
+    #[test]
+    fn tls_enabled_resolves_configured_paths() {
+        let config: OpenSnowConfig = toml::from_str(
+            r#"
+            [server.tls]
+            enabled = true
+            cert_path = "/etc/opensnow/tls/server.crt"
+            key_path = "/etc/opensnow/tls/server.key"
+            "#,
+        )
+        .expect("config should parse");
+        let resolved = config.server.tls.resolved().expect("ok").expect("some");
+        assert_eq!(resolved.0, "/etc/opensnow/tls/server.crt");
+        assert_eq!(resolved.1, "/etc/opensnow/tls/server.key");
     }
 
     #[test]

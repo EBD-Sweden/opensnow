@@ -195,9 +195,28 @@ jobs:
         run: cargo machete
         continue-on-error: true   # warn only, don't block merge
 
-      - name: Security audit
-        run: cargo audit
-        continue-on-error: true   # warn only (CVEs in transitive deps may be unfixable)
+      - name: Security audit (blocking)
+        # SOC 2 CC6.8/CC7.1: known-vulnerable dependencies must block merge.
+        # If a specific advisory is genuinely unfixable upstream, document it and
+        # add a scoped `--ignore RUSTSEC-XXXX-NNNN` here rather than reverting to
+        # warn-only for all advisories.
+        run: cargo audit --deny warnings
+
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so gitleaks can scan past commits, not just the tip.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        # SOC 2 CC6.8/CC7.1 supply-chain: fail the build if a secret is detected
+        # in the working tree or git history.
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   helm-lint:
     name: Helm Lint

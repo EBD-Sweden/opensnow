@@ -1,7 +1,10 @@
+use aes_gcm::aead::{Aead, KeyInit, Payload};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use rand::RngCore;
 use rusqlite::{Connection, OptionalExtension, params};
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::fmt;
@@ -361,10 +364,24 @@ pub trait SecretProvider: Send + Sync {
 /// must configure AWS/GCP/Vault handles. The local store still persists only a
 /// sealed payload plus metadata, which gives tests and demos the same no-raw-
 /// secret API shape as cloud-backed providers.
+/// Versioned sealed-payload format tag for AES-256-GCM AEAD sealing.
+///
+/// Layout: `"v1." + hex(nonce[12]) + "." + hex(ciphertext||tag)`.
+/// Payloads written by the prior (insecure) XOR keystream have no version
+/// prefix (`hex(nonce[16]) + "." + hex(cipher)`) and are rejected by `unseal`
+/// so legacy ciphertext is detectable and can be migrated/rotated.
+const SEALED_PAYLOAD_V1: &str = "v1";
+
+/// AES-256-GCM nonce length in bytes (96-bit nonce, the AEAD standard size).
+const AES_GCM_NONCE_LEN: usize = 12;
+
 pub struct TrustedSecretStore {
     conn: Arc<Mutex<Connection>>,
     provider: SecretProviderConfig,
-    master_key: Vec<u8>,
+    /// Derived 32-byte AES-256 data key. Derived deterministically from the
+    /// configured master-key source via SHA-256 so arbitrary-length operator
+    /// key material maps to a valid 256-bit key without weakening key handling.
+    data_key: [u8; 32],
 }
 
 impl TrustedSecretStore {
@@ -375,7 +392,7 @@ impl TrustedSecretStore {
         let store = Self {
             conn,
             provider: SecretProviderConfig::local_dev("local-dev-sealed-store"),
-            master_key: master_key.as_bytes().to_vec(),
+            data_key: derive_data_key(master_key.as_bytes()),
         };
         store.init_schema()?;
         Ok(store)
@@ -401,20 +418,73 @@ impl TrustedSecretStore {
         Ok(())
     }
 
-    fn seal(&self, raw_secret: &str) -> String {
-        let mut nonce = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut nonce);
-        let cipher = xor_keystream(raw_secret.as_bytes(), &self.master_key, &nonce);
-        format!("{}.{}", hex_encode(&nonce), hex_encode(&cipher))
+    /// Seal a secret with AES-256-GCM using a fresh random 96-bit nonce.
+    ///
+    /// The output is authenticated (GCM tag appended to the ciphertext) and
+    /// versioned (`v1.<nonce>.<ciphertext||tag>`). The version tag is bound as
+    /// AEAD associated data so a downgrade to a different format fails to
+    /// authenticate. Returns an error only if the AEAD primitive itself fails,
+    /// which is not expected for valid keys/nonces.
+    fn seal(&self, raw_secret: &str) -> Result<String> {
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.data_key));
+        let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: raw_secret.as_bytes(),
+                    aad: SEALED_PAYLOAD_V1.as_bytes(),
+                },
+            )
+            .map_err(|_| anyhow!("failed to seal secret with AES-256-GCM"))?;
+        Ok(format!(
+            "{}.{}.{}",
+            SEALED_PAYLOAD_V1,
+            hex_encode(&nonce_bytes),
+            hex_encode(&ciphertext)
+        ))
     }
 
+    /// Open a sealed payload, verifying authenticity (tamper/wrong-key both
+    /// fail). Legacy unversioned XOR payloads are rejected with an actionable
+    /// error so they can be re-sealed/rotated rather than silently trusted.
     fn unseal(&self, sealed_payload: &str) -> Result<String> {
-        let (nonce_hex, cipher_hex) = sealed_payload
-            .split_once('.')
+        let mut parts = sealed_payload.splitn(3, '.');
+        let version = parts
+            .next()
             .ok_or_else(|| anyhow!("invalid sealed secret payload"))?;
-        let nonce = hex_decode(nonce_hex)?;
-        let cipher = hex_decode(cipher_hex)?;
-        let plain = xor_keystream(&cipher, &self.master_key, &nonce);
+        if version != SEALED_PAYLOAD_V1 {
+            bail!(
+                "sealed secret uses an unsupported or legacy format (expected '{SEALED_PAYLOAD_V1}'); \
+                 rotate this handle to re-seal it with AES-256-GCM"
+            );
+        }
+        let nonce_hex = parts
+            .next()
+            .ok_or_else(|| anyhow!("invalid sealed secret payload: missing nonce"))?;
+        let cipher_hex = parts
+            .next()
+            .ok_or_else(|| anyhow!("invalid sealed secret payload: missing ciphertext"))?;
+        let nonce_bytes = hex_decode(nonce_hex)?;
+        if nonce_bytes.len() != AES_GCM_NONCE_LEN {
+            bail!("invalid sealed secret payload: bad nonce length");
+        }
+        let ciphertext = hex_decode(cipher_hex)?;
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.data_key));
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let plain = cipher
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: &ciphertext,
+                    aad: SEALED_PAYLOAD_V1.as_bytes(),
+                },
+            )
+            .map_err(|_| {
+                anyhow!("failed to open sealed secret: authentication failed (tampered or wrong key)")
+            })?;
         String::from_utf8(plain).context("sealed secret payload is not UTF-8")
     }
 
@@ -499,7 +569,7 @@ impl SecretProvider for TrustedSecretStore {
         let now = Utc::now();
         let provider_json = serde_json::to_string(&self.provider)?;
         let descriptor_json = serde_json::to_string(&descriptor)?;
-        let sealed_payload = self.seal(raw_secret);
+        let sealed_payload = self.seal(raw_secret)?;
         let db = self.conn.lock().unwrap();
         db.execute(
             "INSERT INTO secret_handles
@@ -544,7 +614,7 @@ impl SecretProvider for TrustedSecretStore {
         if existing.state != SecretState::Active {
             bail!("cannot rotate revoked secret handle");
         }
-        let sealed_payload = self.seal(raw_secret);
+        let sealed_payload = self.seal(raw_secret)?;
         let updated_at = Utc::now().to_rfc3339();
         let db = self.conn.lock().unwrap();
         db.execute(
@@ -593,12 +663,15 @@ impl SecretProvider for TrustedSecretStore {
     }
 }
 
-fn xor_keystream(input: &[u8], key: &[u8], nonce: &[u8]) -> Vec<u8> {
-    input
-        .iter()
-        .enumerate()
-        .map(|(idx, byte)| byte ^ key[idx % key.len()] ^ nonce[idx % nonce.len()])
-        .collect()
+/// Derive a fixed 32-byte AES-256 data key from arbitrary-length master key
+/// material. SHA-256 maps the operator-supplied key source to a valid 256-bit
+/// key deterministically; it does not weaken key handling (the master key is
+/// still the sole secret) and gives stable round-trips for a given master key.
+fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"opensnow-sealed-secret-store/v1");
+    hasher.update(master_key);
+    hasher.finalize().into()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -627,6 +700,64 @@ fn hex_decode(input: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    fn new_store(master_key: &str) -> TrustedSecretStore {
+        let conn = Arc::new(Mutex::new(Connection::open_in_memory().expect("sqlite")));
+        TrustedSecretStore::local_dev(conn, master_key).expect("store")
+    }
+
+    #[test]
+    fn aead_seal_unseal_round_trips() {
+        let store = new_store("unit-test-master-key");
+        let sealed = store.seal("super-secret-value").expect("seal");
+        assert!(sealed.starts_with("v1."), "payload must be versioned: {sealed}");
+        assert!(
+            !sealed.contains("super-secret-value"),
+            "plaintext must not appear in sealed payload"
+        );
+        let opened = store.unseal(&sealed).expect("unseal");
+        assert_eq!(opened, "super-secret-value");
+    }
+
+    #[test]
+    fn aead_uses_fresh_nonce_per_seal() {
+        let store = new_store("unit-test-master-key");
+        let a = store.seal("same-plaintext").expect("seal a");
+        let b = store.seal("same-plaintext").expect("seal b");
+        assert_ne!(a, b, "random nonce must make ciphertexts differ");
+        assert_eq!(store.unseal(&a).unwrap(), store.unseal(&b).unwrap());
+    }
+
+    #[test]
+    fn aead_detects_tampered_ciphertext() {
+        let store = new_store("unit-test-master-key");
+        let sealed = store.seal("tamper-me").expect("seal");
+        // Flip the last hex nibble of the ciphertext+tag.
+        let mut bytes: Vec<char> = sealed.chars().collect();
+        let last = bytes.len() - 1;
+        bytes[last] = if bytes[last] == 'a' { 'b' } else { 'a' };
+        let tampered: String = bytes.into_iter().collect();
+        let err = store.unseal(&tampered).unwrap_err().to_string();
+        assert!(err.contains("authentication failed"), "got: {err}");
+    }
+
+    #[test]
+    fn aead_fails_with_wrong_key() {
+        let sealer = new_store("master-key-one");
+        let sealed = sealer.seal("cross-key-secret").expect("seal");
+        let other = new_store("master-key-two");
+        let err = other.unseal(&sealed).unwrap_err().to_string();
+        assert!(err.contains("authentication failed"), "got: {err}");
+    }
+
+    #[test]
+    fn aead_rejects_legacy_unversioned_payload() {
+        let store = new_store("unit-test-master-key");
+        // Simulate the prior XOR format: "<nonce_hex>.<cipher_hex>" with no version tag.
+        let legacy = format!("{}.{}", hex_encode(&[0u8; 16]), hex_encode(b"whatever"));
+        let err = store.unseal(&legacy).unwrap_err().to_string();
+        assert!(err.contains("legacy format"), "got: {err}");
+    }
 
     #[cfg(unix)]
     fn executable_script(body: &str) -> tempfile::TempPath {

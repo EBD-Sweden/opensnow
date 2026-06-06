@@ -17,6 +17,10 @@ jsonwebtoken = "9"
 rand = "0.8"
 base64 = "0.22"
 sha2 = "0.10"
+# Vetted AEAD (RustCrypto) for the local sealed-secret store: AES-256-GCM with
+# random per-message nonces and authentication tags. Replaces the prior
+# hand-rolled XOR keystream.
+aes-gcm = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [dev-dependencies]
