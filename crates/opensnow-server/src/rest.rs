@@ -25,6 +25,10 @@ use crate::tenant::{TenantId, tenant_middleware};
 pub type AppState = EngineHandle;
 
 pub(crate) const APP_UI: &str = include_str!("../static/app.html");
+// Vendored Vega-Lite (BSD) so the Build tab's charts render with no external CDN.
+const VEGA_JS: &str = include_str!("../static/vendor/vega.min.js");
+const VEGA_LITE_JS: &str = include_str!("../static/vendor/vega-lite.min.js");
+const VEGA_EMBED_JS: &str = include_str!("../static/vendor/vega-embed.min.js");
 const DEPLOYMENT_DOC: &str = include_str!("../../../docs/DEPLOYMENT.md");
 const SQL_COMPATIBILITY_DOC_BODY: &str = include_str!("../../../docs/SQL_COMPATIBILITY.md");
 const PUBLIC_TEST_PATH_DOC: &str = include_str!("../../../docs/PUBLIC_TEST_PATH.md");
@@ -138,6 +142,10 @@ pub fn create_router_with_auth_and_buffer(
         .route("/docs/DEPLOYMENT.md", get(deployment_doc))
         .route("/docs/SQL_COMPATIBILITY.md", get(sql_compatibility_doc))
         .route("/docs/PUBLIC_TEST_PATH.md", get(public_test_path_doc))
+        // Self-hosted Vega-Lite (no CDN) for the native Build tab.
+        .route("/vendor/vega.min.js", get(|| async { js_asset(VEGA_JS) }))
+        .route("/vendor/vega-lite.min.js", get(|| async { js_asset(VEGA_LITE_JS) }))
+        .route("/vendor/vega-embed.min.js", get(|| async { js_asset(VEGA_EMBED_JS) }))
         .route("/health", get(health))
         .route("/metrics", get(metrics_handler));
 
@@ -221,6 +229,14 @@ pub(crate) fn ui_asset(file: &str, embedded: &'static str) -> Html<String> {
         }
     }
     Html(embedded.to_string())
+}
+
+fn js_asset(body: &'static str) -> Response {
+    (
+        [(header::CONTENT_TYPE, "application/javascript; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 fn markdown_response(body: &'static str) -> Response {
