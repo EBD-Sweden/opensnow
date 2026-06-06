@@ -148,7 +148,7 @@ admin_access=$(curl -fsS -X POST http://127.0.0.1:8080/auth/token \
   -d '{"grant_type":"client_credentials","client_id":"admin-client","client_secret":"REDACTED"}' | jq -r .access_token)
 
 curl -fsS -X POST http://127.0.0.1:8080/api/v1/service-clients \
-  -H "Authorization: Bearer ${admin_access}" \
+  -H "Authorization: Bearer <admin-access-token>" \
   -H 'Content-Type: application/json' \
   -d '{"client_id":"svc-acme-loader","account_id":"acme-corp","workspace_id":"acme-corp-default","role":"ANALYST","scopes":["sql.query","table.select"]}'
 ```
@@ -861,13 +861,13 @@ The REST API remains the default client path for local/public smoke. Two operato
 ```bash
 # Register a local/object-store Parquet file or directory as a queryable table.
 curl -X POST http://localhost:8080/api/v1/tables/register \
-  -H "Authorization: Bearer ***" \
+  -H "Authorization: Bearer <admin-access-token>" \
   -H "content-type: application/json" \
   -d '{"name":"orders_ext","uri":"s3://my-bucket/path/to/orders/"}'
 
 # Export a validated OpenSnow query result into an external PostgreSQL table.
 curl -X POST http://localhost:8080/api/v1/export/postgres \
-  -H "Authorization: Bearer ***" \
+  -H "Authorization: Bearer <admin-access-token>" \
   -H "content-type: application/json" \
   -d '{"sql":"SELECT * FROM orders_ext LIMIT 1000","dsn":"postgres://user:***@postgres.example.com:5432/app","schema":"public","table":"orders_ext","mode":"replace"}'
 ```
