@@ -125,6 +125,8 @@ Enterprise mode starts with durable account registration, not demo tenant header
 
 Account-owned admin mutations use authenticated JWT context as the source of account scope. For example, `POST /api/v1/admin/accounts/{account_id}/workspaces` requires `policy.admin`, rejects spoofed `X-Tenant-ID` and `X-Account-ID` values in `jwt_required`, and denies cross-account path mutation unless the token has the explicit `break_glass.admin` scope. Customer account owners should receive tokens whose `tenant_id` matches their account id; platform break-glass tokens must be short-lived, audited, and reserved for recovery operations.
 
+The native Build-tab chart store (`OPENSNOW_CHARTS_FILE`, default `charts.json`) keeps `GET /api/v1/charts` public so dashboards can render in demos. When JWT auth is enabled, mutable chart routes (`POST /api/v1/charts` and `DELETE /api/v1/charts/{id}`) are protected by the same bearer-token middleware and require `policy.admin` or a platform-admin role before changing the shared chart file. In no-auth local demos those mutations remain available only on the local/demo listener; do not expose no-auth chart mutation to the internet.
+
 For local/operator administration against the configured catalog path, the CLI exposes the same lifecycle primitives without going through the public demo flow:
 
 ```bash

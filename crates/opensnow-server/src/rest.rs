@@ -199,7 +199,8 @@ pub fn create_router_with_auth_and_buffer(
         .merge(pipeline_public)
         .merge(pipeline_admin)
         // Saved chart/dashboard specs for the native Build tab (file-backed).
-        .merge(crate::charts::router())
+        // Reads stay public; mutations inherit auth/RBAC when auth is enabled.
+        .merge(crate::charts::router(auth))
         .merge(ingest_batch_routes)
         .merge(ingest_status_routes)
         // Tenant resolution runs for every request — public and protected.
@@ -1840,6 +1841,62 @@ mod tenant_tests {
             .await
             .unwrap();
         assert_eq!(non_admin.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn auth_enabled_chart_mutations_require_policy_admin_scope() {
+        let auth = test_auth_state();
+        let admin = bearer(&auth, "admin-client", "SYSADMIN", vec!["policy.admin"]);
+        let analyst = bearer(
+            &auth,
+            "analyst-client",
+            "ANALYST",
+            vec!["sql.query", "table.select"],
+        );
+        let app = make_auth_router(auth);
+
+        let public_read = app
+            .clone()
+            .oneshot(Request::get("/api/v1/charts").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(public_read.status(), StatusCode::OK);
+
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/charts")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Unsafe","sql":"SELECT 1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let non_admin = app
+            .clone()
+            .oneshot(
+                Request::delete("/api/v1/charts/c1")
+                    .header("authorization", analyst)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(non_admin.status(), StatusCode::FORBIDDEN);
+
+        let authenticated_admin = app
+            .oneshot(
+                Request::post("/api/v1/charts")
+                    .header("content-type", "application/json")
+                    .header("authorization", admin)
+                    .body(Body::from(r#"{"title":"Safe","sql":"SELECT 1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authenticated_admin.status(), StatusCode::OK);
     }
 
     #[tokio::test]

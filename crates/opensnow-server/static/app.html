@@ -199,7 +199,7 @@ svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
     <a data-tab="docs"><span class="ic">📖</span> Documentation</a>
   </nav>
   <div class="side-foot">
-    <div class="status-pill" id="conn"><span class="dot"></span><span id="conn-text">checking…</span></div>
+    <div class="status-pill" id="conn"><span class="dot"></span><span id="conn-text">Connection status: checking…</span></div>
   </div>
 </aside>
 
@@ -215,6 +215,9 @@ svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
   <section class="view" id="view-query">
     <div class="grid-2">
       <div class="panel">
+        <h2>Start here</h2>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:12px">For an external tester: confirm the Connection status, Load demo data, pick a sample query, then run it. The Build tab remains available for no-code charts after data is loaded.</p>
+        <p style="color:var(--text2);font-size:12px;margin-bottom:12px">pgwire is disabled by default for public demos. To test Postgres wire access, start with <code>--enable-pgwire</code>, set <code>[server].pg_enabled=true</code> or <code>OPENSNOW_ENABLE_PGWIRE=1</code>, then run <code>psql -h localhost -p 5433</code>. HTTP query smoke test: <code>curl http://localhost:8080/api/v1/query</code>. Full guide: <code>docs/DEPLOYMENT.md</code>.</p>
         <h2>SQL console</h2>
         <div class="controls">
           <select class="sample" id="sample-query" aria-label="Sample query"></select>
@@ -222,6 +225,7 @@ svg.edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
           <button id="clear-btn" type="button">Clear</button>
           <span class="badge">Ctrl+Enter to run</span>
         </div>
+        <label for="sql">SQL editor</label>
         <textarea id="sql" spellcheck="false" autocomplete="off">SHOW TABLES</textarea>
         <div class="status-bar" id="status-bar">Pick a table on the right or a sample query, then Run.</div>
         <div id="pager">

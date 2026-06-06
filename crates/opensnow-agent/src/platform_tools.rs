@@ -595,24 +595,83 @@ fn os_call(method: &str, path: &str, body: Option<Value>) -> Result<Value> {
         Ok(r) => Ok(r.into_json::<Value>().unwrap_or_else(|_| json!({}))),
         Err(ureq::Error::Status(code, r)) => {
             let t = r.into_string().unwrap_or_default();
-            Err(anyhow!("opensnow {method} {path} -> {code}: {}", &t[..t.len().min(200)]))
+            Err(anyhow!(
+                "opensnow {method} {path} -> {code}: {}",
+                &t[..t.len().min(200)]
+            ))
         }
         Err(e) => Err(anyhow!("opensnow request failed: {e}")),
     }
 }
 
-/// Build the same SELECT the Build tab generates, from declarative fields.
-fn build_chart_sql(table: &str, ctype: &str, x: &str, y: &str, agg: &str, series: &str, limit: u64) -> String {
-    if ctype == "table" {
-        return format!("SELECT * FROM {table} LIMIT {limit}");
+fn validate_sql_identifier<'a>(kind: &str, value: &'a str) -> Result<&'a str> {
+    let ok = !value.is_empty()
+        && value.len() <= 128
+        && value
+            .chars()
+            .enumerate()
+            .all(|(idx, c)| c == '_' || c.is_ascii_alphabetic() || (idx > 0 && c.is_ascii_digit()));
+    if ok {
+        Ok(value)
+    } else {
+        Err(anyhow!(
+            "invalid chart {kind} '{value}': use unquoted SQL identifiers (letters, digits and underscores; not starting with a digit)"
+        ))
     }
+}
+
+fn validate_chart_type(ctype: &str) -> Result<&str> {
+    match ctype {
+        "bar" | "line" | "area" | "point" | "arc" | "table" => Ok(ctype),
+        _ => Err(anyhow!(
+            "invalid chart type '{ctype}': expected bar, line, area, point, arc or table"
+        )),
+    }
+}
+
+fn validate_chart_agg(agg: &str) -> Result<&str> {
+    match agg {
+        "sum" | "avg" | "max" | "min" | "count" | "none" => Ok(agg),
+        _ => Err(anyhow!(
+            "invalid chart aggregate '{agg}': expected sum, avg, max, min, count or none"
+        )),
+    }
+}
+
+/// Build the same SELECT the Build tab generates, from declarative fields.
+fn build_chart_sql(
+    table: &str,
+    ctype: &str,
+    x: &str,
+    y: &str,
+    agg: &str,
+    series: &str,
+    limit: u64,
+) -> Result<String> {
+    let table = validate_sql_identifier("table", table)?;
+    let ctype = validate_chart_type(ctype)?;
+    let agg = validate_chart_agg(agg)?;
+    let limit = limit.clamp(1, 10_000);
+
+    if ctype == "table" {
+        return Ok(format!("SELECT * FROM {table} LIMIT {limit}"));
+    }
+
+    let x = validate_sql_identifier("x column", x)?;
+    let y = validate_sql_identifier("y column", y)?;
+    let series = if series.is_empty() {
+        None
+    } else {
+        Some(validate_sql_identifier("series column", series)?)
+    };
+
     let ycol = match agg {
         "count" => "count(*)".to_string(),
         "none" => y.to_string(),
         a => format!("{a}({y})"),
     };
     let mut cols = format!("{x} AS x, {ycol} AS y");
-    if !series.is_empty() {
+    if let Some(series) = series {
         cols.push_str(&format!(", {series} AS series"));
     }
     let mut sql = format!("SELECT {cols} FROM {table} WHERE {x} IS NOT NULL");
@@ -621,7 +680,7 @@ fn build_chart_sql(table: &str, ctype: &str, x: &str, y: &str, agg: &str, series
     }
     if agg != "none" {
         sql.push_str(&format!(" GROUP BY {x}"));
-        if !series.is_empty() {
+        if let Some(series) = series {
             sql.push_str(&format!(", {series}"));
         }
     }
@@ -630,7 +689,7 @@ fn build_chart_sql(table: &str, ctype: &str, x: &str, y: &str, agg: &str, series
     } else {
         " ORDER BY 2 DESC"
     });
-    format!("{sql} LIMIT {limit}")
+    Ok(format!("{sql} LIMIT {limit}"))
 }
 
 /// List saved native-Build charts.
@@ -672,9 +731,11 @@ impl Tool for ChartCreateTool {
             Some(s) if !s.trim().is_empty() => s.to_string(),
             _ => {
                 if table.is_empty() || (ctype != "table" && (x.is_empty() || y.is_empty())) {
-                    return Err(anyhow!("provide 'sql', or 'table' + 'x' + 'y' to generate it"));
+                    return Err(anyhow!(
+                        "provide 'sql', or 'table' + 'x' + 'y' to generate it"
+                    ));
                 }
-                build_chart_sql(table, ctype, x, y, agg, series, limit)
+                build_chart_sql(table, ctype, x, y, agg, series, limit)?
             }
         };
         let spec = json!({
@@ -683,5 +744,61 @@ impl Tool for ChartCreateTool {
             "hasSeries": !series.is_empty(), "sql": sql,
         });
         os_call("POST", "/api/v1/charts", Some(spec))
+    }
+}
+
+#[cfg(test)]
+mod chart_sql_tests {
+    use super::*;
+
+    #[test]
+    fn generated_chart_sql_accepts_known_types_and_aggregates() {
+        let sql = build_chart_sql(
+            "mart_house_price_yoy",
+            "line",
+            "period",
+            "yoy_pct",
+            "avg",
+            "geo",
+            250,
+        )
+        .unwrap();
+
+        assert_eq!(
+            sql,
+            "SELECT period AS x, avg(yoy_pct) AS y, geo AS series FROM mart_house_price_yoy WHERE period IS NOT NULL AND yoy_pct IS NOT NULL GROUP BY period, geo ORDER BY 1 LIMIT 250"
+        );
+    }
+
+    #[test]
+    fn generated_chart_sql_rejects_unsafe_identifiers_and_enums() {
+        for (table, ctype, x, y, agg, series) in [
+            ("orders;DROP", "bar", "period", "amount", "sum", ""),
+            ("orders", "bar;DROP", "period", "amount", "sum", ""),
+            (
+                "orders",
+                "bar",
+                "period) FROM users --",
+                "amount",
+                "sum",
+                "",
+            ),
+            ("orders", "bar", "period", "amount", "sum);DROP", ""),
+            ("orders", "bar", "period", "amount", "sum", "geo;DROP"),
+        ] {
+            assert!(
+                build_chart_sql(table, ctype, x, y, agg, series, 500).is_err(),
+                "unsafe chart SQL input should be rejected: {table}/{ctype}/{x}/{y}/{agg}/{series}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_table_sql_clamps_limit_and_validates_table() {
+        assert_eq!(
+            build_chart_sql("orders", "table", "", "", "sum", "", 50_000).unwrap(),
+            "SELECT * FROM orders LIMIT 10000"
+        );
+        assert!(build_chart_sql("1orders", "table", "", "", "sum", "", 10).is_err());
     }
 }

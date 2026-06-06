@@ -6,8 +6,10 @@
 //! the generated SQL); rendering is client-side Vega-Lite and execution goes
 //! through the gated `/api/v1/query` endpoint, so this store never runs SQL.
 //!
-//! Path: `OPENSNOW_CHARTS_FILE` (default `charts.json`). Reads are public; in
-//! the public demo, writes are reachable (low-risk: a stored spec is inert).
+//! Path: `OPENSNOW_CHARTS_FILE` (default `charts.json`). Reads are public.
+//! Writes remain open only in unauthenticated local/public demos; auth-enabled
+//! deployments require a bearer token with `policy.admin` (or platform-admin
+//! role) before mutating the shared chart store.
 
 use std::path::PathBuf;
 
@@ -45,10 +47,23 @@ fn store(charts: &[Value]) -> std::io::Result<()> {
     std::fs::write(path, serde_json::to_string_pretty(charts)?)
 }
 
-pub fn router() -> Router {
+pub fn router(auth: Option<crate::auth::AuthState>) -> Router {
+    let mut write_routes = Router::new()
+        .route("/api/v1/charts", axum::routing::post(save_chart))
+        .route("/api/v1/charts/{id}", delete(delete_chart));
+
+    if let Some(auth_state) = auth {
+        write_routes = write_routes
+            .route_layer(axum::middleware::from_fn(crate::auth::require_admin_scope))
+            .route_layer(axum::middleware::from_fn_with_state(
+                auth_state,
+                crate::auth::jwt_required,
+            ));
+    }
+
     Router::new()
-        .route("/api/v1/charts", get(list_charts).post(save_chart))
-        .route("/api/v1/charts/{id}", delete(delete_chart))
+        .route("/api/v1/charts", get(list_charts))
+        .merge(write_routes)
 }
 
 async fn list_charts() -> Json<Value> {
@@ -89,7 +104,10 @@ async fn save_chart(Json(mut spec): Json<Value>) -> impl IntoResponse {
         charts.push(spec.clone());
     }
     match store(&charts) {
-        Ok(_) => (StatusCode::OK, Json(json!({ "status": "ok", "chart": spec }))),
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({ "status": "ok", "chart": spec })),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "status": "error", "message": e.to_string() })),
