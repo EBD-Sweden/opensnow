@@ -5,6 +5,7 @@ use opensnow_auth::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 /// Convert a free-form tenant display name into a stable, lowercase id.
@@ -276,6 +277,76 @@ pub struct CatalogAuditEvent {
     pub created_at: String,
 }
 
+/// Result of recomputing and verifying the per-account audit hash chain.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditChainStatus {
+    pub account_id: String,
+    /// `true` when the recomputed chain matches every stored hash.
+    pub valid: bool,
+    /// Number of hashed entries that verified successfully.
+    pub verified_entries: u64,
+    /// Number of legacy pre-chain rows (empty `entry_hash`) that were skipped.
+    pub pre_chain_entries: u64,
+    /// `id` of the first row that failed verification, if any.
+    pub broken_at_id: Option<i64>,
+    /// Human-readable reason for the failure, if any.
+    pub detail: Option<String>,
+}
+
+impl AuditChainStatus {
+    fn broken(account_id: &str, id: i64, detail: String, verified: u64, pre_chain: u64) -> Self {
+        Self {
+            account_id: account_id.to_string(),
+            valid: false,
+            verified_entries: verified,
+            pre_chain_entries: pre_chain,
+            broken_at_id: Some(id),
+            detail: Some(detail),
+        }
+    }
+}
+
+/// Compute the canonical audit entry hash for a row.
+///
+/// `entry_hash = SHA-256(prev_hash ‖ canonical_serialization(row))`.
+///
+/// The canonical serialization is a fixed-field, length-prefixed encoding of
+/// the row's identifying fields (account, organization, and the exact stored
+/// `event_json` bytes). Length prefixes make the concatenation unambiguous so
+/// no field boundary can be shifted to forge a collision, and the stored JSON
+/// string is hashed verbatim (not re-serialized) so verification is stable.
+fn compute_audit_entry_hash(
+    prev_hash: &str,
+    account_id: &str,
+    organization_id: Option<&str>,
+    event_json: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"opensnow-audit-chain/v1");
+    feed_field(&mut hasher, prev_hash.as_bytes());
+    feed_field(&mut hasher, account_id.as_bytes());
+    match organization_id {
+        Some(org) => {
+            hasher.update([1u8]);
+            feed_field(&mut hasher, org.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+    feed_field(&mut hasher, event_json.as_bytes());
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// Feed a length-prefixed field into the hasher so concatenation is unambiguous.
+fn feed_field(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlPlaneResource {
     pub id: String,
@@ -481,7 +552,9 @@ impl Catalog {
                 account_id TEXT NOT NULL,
                 organization_id TEXT,
                 event_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                prev_hash TEXT NOT NULL DEFAULT '',
+                entry_hash TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS control_plane_resources (
@@ -517,6 +590,24 @@ impl Catalog {
         )?;
         Self::ensure_column(&self.conn, "warehouses", "account_id", "TEXT")?;
         Self::ensure_column(&self.conn, "warehouses", "organization_id", "TEXT")?;
+
+        // Tamper-evident audit chain columns. Catalogs created before the
+        // hash-chain feature have plain audit rows; backfilling with an empty
+        // default keeps those legacy rows readable. `verify_audit_chain`
+        // treats empty `entry_hash` rows as pre-chain (skipped) so existing
+        // data does not spuriously fail verification.
+        Self::ensure_column(
+            &self.conn,
+            "audit_events",
+            "prev_hash",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        Self::ensure_column(
+            &self.conn,
+            "audit_events",
+            "entry_hash",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
 
         // Indexes that depend on backfilled columns have to come *after*
         // ensure_column — pre-existing DBs may not have the columns when the
@@ -1669,14 +1760,119 @@ impl Catalog {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Append a tamper-evident audit event.
+    ///
+    /// The audit log is a per-account hash chain: each row stores
+    /// `entry_hash = SHA-256(prev_hash ‖ canonical_serialization(row))` where
+    /// `prev_hash` is the `entry_hash` of the immediately preceding row for the
+    /// same `account_id` (or the empty string for the first row). The read of
+    /// the chain tail and the insert happen inside one transaction so the chain
+    /// stays linear under the catalog's single-connection, serialized model.
+    ///
+    /// Any in-place `UPDATE`/`DELETE` of a row breaks the recomputed hash for
+    /// that row and every row after it, which `verify_audit_chain` detects.
     pub fn append_audit_event(
         &self,
         account_id: &str,
         organization_id: Option<&str>,
         event: &AuditEvent,
     ) -> Result<i64> {
-        self.conn.execute("INSERT INTO audit_events (account_id, organization_id, event_json) VALUES (?1, ?2, ?3)", params![account_id, organization_id, serde_json::to_string(event)?])?;
-        Ok(self.conn.last_insert_rowid())
+        let event_json = serde_json::to_string(event)?;
+        // `unchecked_transaction` takes `&self`, matching this API's signature;
+        // the catalog owns a single Connection so calls are already serialized.
+        let tx = self.conn.unchecked_transaction()?;
+        let prev_hash: String = tx
+            .query_row(
+                "SELECT entry_hash FROM audit_events WHERE account_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or_default();
+        let entry_hash =
+            compute_audit_entry_hash(&prev_hash, account_id, organization_id, &event_json);
+        tx.execute(
+            "INSERT INTO audit_events (account_id, organization_id, event_json, prev_hash, entry_hash) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![account_id, organization_id, event_json, prev_hash, entry_hash],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Recompute the audit hash chain for an account and report integrity.
+    ///
+    /// Walks every `audit_events` row for `account_id` in ascending `id` order,
+    /// recomputing each `entry_hash` from the stored `prev_hash` and row
+    /// contents and checking that (a) `prev_hash` links to the previous row's
+    /// `entry_hash` and (b) the recomputed `entry_hash` matches what is stored.
+    /// The first divergence (caused by any tamper/edit/delete) is reported.
+    ///
+    /// Legacy rows written before the hash chain existed have an empty
+    /// `entry_hash`; they are reported as `pre_chain` and skipped rather than
+    /// flagged, and the chain is considered to start at the first hashed row.
+    pub fn verify_audit_chain(&self, account_id: &str) -> Result<AuditChainStatus> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, organization_id, event_json, prev_hash, entry_hash FROM audit_events WHERE account_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![account_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?;
+
+        let mut verified = 0u64;
+        let mut pre_chain = 0u64;
+        let mut expected_prev: Option<String> = None;
+        for row in rows {
+            let (id, org, event_json, prev_hash, entry_hash) = row?;
+            if entry_hash.is_empty() {
+                // Pre-chain legacy row: cannot be verified, do not anchor the
+                // chain on it. A later hashed row starts the verifiable chain.
+                pre_chain += 1;
+                continue;
+            }
+            if let Some(ref want_prev) = expected_prev
+                && &prev_hash != want_prev
+            {
+                return Ok(AuditChainStatus::broken(
+                    account_id,
+                    id,
+                    format!(
+                        "prev_hash mismatch: row links to {prev_hash:?} but previous entry hash was {want_prev:?}"
+                    ),
+                    verified,
+                    pre_chain,
+                ));
+            }
+            let recomputed =
+                compute_audit_entry_hash(&prev_hash, account_id, org.as_deref(), &event_json);
+            if recomputed != entry_hash {
+                return Ok(AuditChainStatus::broken(
+                    account_id,
+                    id,
+                    "entry_hash mismatch: row contents do not match stored hash (tampered)"
+                        .to_string(),
+                    verified,
+                    pre_chain,
+                ));
+            }
+            verified += 1;
+            expected_prev = Some(entry_hash);
+        }
+
+        Ok(AuditChainStatus {
+            account_id: account_id.to_string(),
+            valid: true,
+            verified_entries: verified,
+            pre_chain_entries: pre_chain,
+            broken_at_id: None,
+            detail: None,
+        })
     }
 
     pub fn search_audit_events(
@@ -2539,6 +2735,200 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    fn sample_audit_event(action: &str, resource_id: &str) -> AuditEvent {
+        AuditEvent {
+            event_time: chrono::DateTime::parse_from_rfc3339("2026-05-30T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            organization_id: "org_acme".to_string(),
+            tenant_id: Some("acct_acme".to_string()),
+            actor_type: "user".to_string(),
+            actor_id: "alice".to_string(),
+            actor_display: Some("Alice Example".to_string()),
+            actor_auth_method: Some("scim-bearer".to_string()),
+            action: action.to_string(),
+            resource_type: "scim_user".to_string(),
+            resource_id: resource_id.to_string(),
+            resource_name: Some("alice@example.com".to_string()),
+            result: opensnow_auth::AuditResult::Succeeded,
+            trace_id: Some("req-1".to_string()),
+            secret_handle_refs: Vec::new(),
+            metadata_redacted: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn audit_chain_links_and_verifies() {
+        let catalog = Catalog::open(":memory:").unwrap();
+        for i in 0..5 {
+            catalog
+                .append_audit_event(
+                    "acct_acme",
+                    Some("org_acme"),
+                    &sample_audit_event("scim.user.create", &format!("usr_{i}")),
+                )
+                .unwrap();
+        }
+        // Each row's prev_hash must equal the prior row's entry_hash, and the
+        // first row's prev_hash must be empty.
+        let conn = &catalog.conn;
+        let mut stmt = conn
+            .prepare("SELECT prev_hash, entry_hash FROM audit_events ORDER BY id ASC")
+            .unwrap();
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].0, "", "first row prev_hash must be empty");
+        for window in rows.windows(2) {
+            assert_eq!(window[1].0, window[0].1, "chain link must be contiguous");
+            assert_ne!(window[0].1, "", "entry_hash must be populated");
+        }
+
+        let status = catalog.verify_audit_chain("acct_acme").unwrap();
+        assert!(status.valid, "intact chain must verify: {status:?}");
+        assert_eq!(status.verified_entries, 5);
+        assert_eq!(status.pre_chain_entries, 0);
+        assert!(status.broken_at_id.is_none());
+    }
+
+    #[test]
+    fn audit_chain_is_isolated_per_account() {
+        let catalog = Catalog::open(":memory:").unwrap();
+        catalog
+            .append_audit_event(
+                "acct_a",
+                Some("org_a"),
+                &sample_audit_event("a.create", "a1"),
+            )
+            .unwrap();
+        catalog
+            .append_audit_event(
+                "acct_b",
+                Some("org_b"),
+                &sample_audit_event("b.create", "b1"),
+            )
+            .unwrap();
+        catalog
+            .append_audit_event(
+                "acct_a",
+                Some("org_a"),
+                &sample_audit_event("a.create", "a2"),
+            )
+            .unwrap();
+        // Both per-account chains verify independently despite interleaving.
+        assert!(catalog.verify_audit_chain("acct_a").unwrap().valid);
+        assert!(catalog.verify_audit_chain("acct_b").unwrap().valid);
+        assert_eq!(
+            catalog
+                .verify_audit_chain("acct_a")
+                .unwrap()
+                .verified_entries,
+            2
+        );
+    }
+
+    #[test]
+    fn audit_chain_detects_edited_row() {
+        let catalog = Catalog::open(":memory:").unwrap();
+        for i in 0..3 {
+            catalog
+                .append_audit_event(
+                    "acct_acme",
+                    Some("org_acme"),
+                    &sample_audit_event("scim.user.create", &format!("usr_{i}")),
+                )
+                .unwrap();
+        }
+        assert!(catalog.verify_audit_chain("acct_acme").unwrap().valid);
+
+        // Tamper: directly mutate the event_json of the middle row, as a DB
+        // admin with table access could. The hash chain must catch it.
+        let middle_id: i64 = catalog
+            .conn
+            .query_row(
+                "SELECT id FROM audit_events ORDER BY id ASC LIMIT 1 OFFSET 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        catalog
+            .conn
+            .execute(
+                "UPDATE audit_events SET event_json = ?1 WHERE id = ?2",
+                params![r#"{"action":"forged"}"#, middle_id],
+            )
+            .unwrap();
+
+        let status = catalog.verify_audit_chain("acct_acme").unwrap();
+        assert!(!status.valid, "tampered chain must fail verification");
+        assert_eq!(status.broken_at_id, Some(middle_id));
+        assert_eq!(
+            status.verified_entries, 1,
+            "only the row before the edit should verify"
+        );
+        assert!(status.detail.unwrap().contains("entry_hash mismatch"));
+    }
+
+    #[test]
+    fn audit_chain_detects_deleted_row() {
+        let catalog = Catalog::open(":memory:").unwrap();
+        for i in 0..4 {
+            catalog
+                .append_audit_event(
+                    "acct_acme",
+                    Some("org_acme"),
+                    &sample_audit_event("scim.user.create", &format!("usr_{i}")),
+                )
+                .unwrap();
+        }
+        // Delete the second row; the following row's prev_hash no longer links.
+        let second_id: i64 = catalog
+            .conn
+            .query_row(
+                "SELECT id FROM audit_events ORDER BY id ASC LIMIT 1 OFFSET 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        catalog
+            .conn
+            .execute("DELETE FROM audit_events WHERE id = ?1", params![second_id])
+            .unwrap();
+
+        let status = catalog.verify_audit_chain("acct_acme").unwrap();
+        assert!(!status.valid, "deletion must break the chain link");
+        assert!(status.detail.unwrap().contains("prev_hash mismatch"));
+    }
+
+    #[test]
+    fn audit_chain_treats_legacy_rows_as_pre_chain() {
+        let catalog = Catalog::open(":memory:").unwrap();
+        // Simulate rows written before the hash chain existed (empty hashes).
+        catalog
+            .conn
+            .execute(
+                "INSERT INTO audit_events (account_id, organization_id, event_json, prev_hash, entry_hash) VALUES (?1, ?2, ?3, '', '')",
+                params!["acct_acme", "org_acme", r#"{"action":"legacy"}"#],
+            )
+            .unwrap();
+        // A new hashed append after legacy rows starts a verifiable chain.
+        catalog
+            .append_audit_event(
+                "acct_acme",
+                Some("org_acme"),
+                &sample_audit_event("scim.user.create", "usr_new"),
+            )
+            .unwrap();
+
+        let status = catalog.verify_audit_chain("acct_acme").unwrap();
+        assert!(status.valid, "legacy rows must not fail verification");
+        assert_eq!(status.pre_chain_entries, 1);
+        assert_eq!(status.verified_entries, 1);
     }
 
     #[test]

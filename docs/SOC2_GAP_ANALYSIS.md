@@ -21,8 +21,36 @@
 > 3. **CI supply chain:** `cargo audit` is now **blocking** and a **gitleaks**
 >    secret-scan job was added (`.github/workflows/ci.yml`).
 >
-> Still open from P0: default-on auth for non-loopback binds, and tamper-evident
-> audit logging (see the audit-logging section for a documented implementation plan).
+> Still open from P0: default-on auth for non-loopback binds.
+
+> **Remediation update (2026-06-06, second pass):** Three further code-achievable
+> controls were implemented:
+> 4. **Tamper-evident audit log (CC7.2):** the `audit_events` table is now a
+>    per-account **SHA-256 hash chain**. `append_audit_event` computes
+>    `entry_hash = SHA-256(prev_hash ‖ canonical_serialization(row))` inside the
+>    same transaction that reads the chain tail (linear under the catalog's
+>    single-connection model), and `verify_audit_chain(account_id)` recomputes
+>    the chain and reports the first row broken by any `UPDATE`/`DELETE`. New
+>    `prev_hash`/`entry_hash` columns + backfill migration; tests for intact
+>    chains, edit-detection, delete-detection, per-account isolation, and legacy
+>    pre-chain rows (`crates/opensnow-catalog/src/lib.rs`).
+> 5. **Sealed-secret key rotation (CC6.1):** the AEAD store now carries a
+>    **key ring** with explicit key ids. A new `v2.<key_id>.<nonce>.<ct>` payload
+>    format binds the key id as AEAD associated data; `v1` payloads remain
+>    readable with the implicit legacy key. `with_rotated_key`/
+>    `register_decrypt_key`/`set_current_key`/`reseal_secret`/`reseal_all` support
+>    decrypt-with-matching-key, encrypt-with-current, and re-seal/rotate. Tests:
+>    old ciphertext opens after rotation, new writes use the current key, key-id
+>    substitution fails authentication (`crates/opensnow-auth/src/secrets.rs`).
+> 6. **Image signing + container SBOM (CC8.1):** the release workflow now signs
+>    container images **keylessly with cosign** (Sigstore OIDC) and attaches a
+>    **syft container SBOM** as a signed CycloneDX in-toto attestation, gated by
+>    `ENABLE_IMAGE_SIGNING` so forks/self-hosted runners without OIDC/registry
+>    access skip it cleanly (`.github/workflows/release.yml`).
+>
+> Still open from P0: default-on auth for non-loopback binds; KMS-backed envelope
+> encryption and warehouse/catalog at-rest encryption; external anchoring of the
+> audit-chain head + SIEM export.
 
 ---
 
@@ -45,15 +73,15 @@ A realistic estimate: **12–18 months** of combined engineering + GRC work befo
 | TSC area | Status | One-line evidence |
 |---|---|---|
 | CC6.1 Logical access — authN | 🟡 Partial | JWT (HS256/RS256/ES256) + Argon2 client secrets + OIDC sessions exist (`crates/opensnow-server/src/auth.rs`), but auth is **off by default** and pgwire uses cleartext-password-carries-JWT (`crates/opensnow-server/src/pg.rs:578`). |
-| CC6.1 Encryption at rest | 🟡 Partial **[REMEDIATED 2026-06-06]** | Sealed-secret store now uses **AES-256-GCM** (random nonce + auth tag + versioned ciphertext) instead of XOR (`crates/opensnow-auth/src/secrets.rs`). Warehouse/catalog at-rest encryption + KMS envelope still outstanding. |
+| CC6.1 Encryption at rest | 🟡 Partial **[REMEDIATED 2026-06-06]** | Sealed-secret store uses **AES-256-GCM** (random nonce + auth tag + versioned ciphertext) instead of XOR, now with a **multi-version key ring + rotation/re-seal** (`v2.<key_id>` format, key id AEAD-bound; `crates/opensnow-auth/src/secrets.rs`). Warehouse/catalog at-rest encryption + KMS envelope still outstanding. |
 | CC6.1 Encryption in transit | 🟡 Partial **[REMEDIATED 2026-06-06]** | Opt-in **rustls TLS** now terminates in-process for the axum HTTP listener and pgwire, config-driven via `[server.tls]` (`crates/opensnow-server/src/server.rs`, `crates/opensnow-core/src/config.rs`). Plaintext default unchanged; mTLS between distributed components still missing. |
 | CC6.2 Provisioning / deprovisioning | 🟡 Partial | SCIM user/group lifecycle + token revoke implemented (`crates/opensnow-server/src/auth.rs:469+`); no access-review or recertification process. |
 | CC6.3 Least privilege / RBAC | 🟡 Partial | GRANT/REVOKE + scope guards exist; object policy is table-level only, admins bypass, no RLS/column masking (`crates/opensnow-server/src/policy.rs:52`). |
 | CC6.6 Boundary protection | 🟡 Partial | Loopback-by-default + `OPENSNOW_ALLOW_PUBLIC` guard (`crates/opensnow-server/src/server.rs:35`); but demo runs `0.0.0.0` + `ALLOW_PUBLIC=1` unauthenticated (`docker-compose.yml:12`). |
 | CC6.7 Data in transit between components | ❌ Missing | No mTLS between coordinator/workers (Arrow Flight gRPC is plaintext); ARCHITECTURE.md claims cert-manager mTLS, not in code. |
-| CC6.8 Malicious software / integrity | 🟡 Partial **[REMEDIATED 2026-06-06]** | SBOM (CycloneDX) in release; `cargo audit` is now **blocking** (`--deny warnings`) and a **gitleaks** secret-scan job runs in CI (`.github/workflows/ci.yml`). Container/image scanning + cosign signing still outstanding. |
+| CC6.8 Malicious software / integrity | 🟡 Partial **[REMEDIATED 2026-06-06]** | Source SBOM (CycloneDX) + **container SBOM (syft)** in release; `cargo audit` is **blocking** (`--deny warnings`); **gitleaks** secret-scan in CI; **cosign keyless image signing + signed SBOM attestation** in the release workflow (`.github/workflows/release.yml`, `ci.yml`). Container image vulnerability scanning (Trivy/Grype) still outstanding. |
 | CC7.1 Vulnerability detection | 🟡 Partial **[REMEDIATED 2026-06-06]** | `cargo audit` now blocks merge; gitleaks secret scanning added. SAST (CodeQL) + scheduled scans still outstanding. |
-| CC7.2 Monitoring / audit logging | 🟡 Partial | Audit events + query history recorded; **not append-only-enforced, not tamper-evident, no SIEM export** (`crates/opensnow-catalog/src/lib.rs:1672`). |
+| CC7.2 Monitoring / audit logging | 🟡 Partial **[REMEDIATED 2026-06-06]** | Audit events + query history recorded and now **tamper-evident**: per-account SHA-256 **hash chain** (`prev_hash`/`entry_hash`) computed in-transaction on append, with `verify_audit_chain()` recompute/integrity path (`crates/opensnow-catalog/src/lib.rs`). Still outstanding: external head anchoring (WORM/KMS sign), enforced retention, and SIEM export. |
 | CC7.3–7.5 Incident response | ❌ Missing | Vulnerability *reporting* mailbox exists (`SECURITY.md:9`); no incident runbooks, on-call, SLAs, or post-incident process in-repo. |
 | CC8.1 Change management | 🟡 Partial | CI lint/test/build/Helm-lint (`.github/workflows/ci.yml`); no documented branch protection, CODEOWNERS, mandatory review, or change-approval evidence. |
 | A1.1–A1.3 Availability / BCP-DR | 🟡 Partial | K8s liveness/readiness probes, KEDA autoscale, AWS RDS 7-day backups + S3 versioning (`deploy/terraform/README.md:148`); **no defined RTO/RPO, no DR test, no rate limiting**. |
@@ -99,7 +127,7 @@ Legend: ✅ in place · 🟡 partial · ❌ missing.
 **What is missing / weak**
 - **In transit:** ~~No TLS listener in the OpenSnow binary.~~ **[REMEDIATED 2026-06-06]** An opt-in `rustls` TLS listener is now implemented in-process for both the axum HTTP and pgwire endpoints, driven by `[server.tls] { enabled, cert_path, key_path }` in `opensnow.toml` (`crates/opensnow-core/src/config.rs`, `crates/opensnow-server/src/server.rs`). It is opt-in (plaintext remains the default for local/demo), and it fails closed if `enabled=true` but cert/key are missing/invalid. **Remaining:** TLS is not yet *enforced* for non-loopback binds (operator must enable it), the Helm `tls.enabled` flag is still a render-time guard rather than wired to `[server.tls]`, and there is no mTLS between distributed components. **Residual severity: Medium.**
 - **At rest:** No encryption of warehouse Parquet, the SQLite/Postgres catalog, or local caches by the product. ~~The "sealed" local secret store uses `xor_keystream`~~ **[REMEDIATED 2026-06-06]** The local sealed-secret store now uses **AES-256-GCM** (RustCrypto `aes-gcm`): a fresh random 96-bit nonce per message, a GCM authentication tag, a versioned `v1.<nonce>.<ct||tag>` payload format (so legacy XOR payloads are detected and rejected for re-sealing), and the format version is bound as AEAD associated data to block downgrade. The 256-bit data key is derived from the existing master-key source via SHA-256. Round-trip / tamper-detection / wrong-key / legacy-rejection unit tests added (`crates/opensnow-auth/src/secrets.rs`). **Remaining:** warehouse/catalog at-rest encryption and KMS-backed envelope encryption are still not implemented. **Residual severity: High** (data/catalog at rest), down from Critical.
-- **Key management / rotation:** JWT key rotation exists; data-key rotation, KMS envelope encryption inside the product, and master-key lifecycle do not. **Severity: High.**
+- **Key management / rotation:** ~~data-key rotation does not exist.~~ **[REMEDIATED 2026-06-06]** The sealed-secret store now supports **data-key rotation**: a key ring keyed by id, a key-tagged `v2.<key_id>.<nonce>.<ct>` payload format (key id bound as AEAD associated data so it can't be re-attributed), decrypt-with-matching-key / encrypt-with-current, and `reseal_secret`/`reseal_all` to migrate existing handles to the current key. `v1` payloads stay readable via the implicit legacy key. JWT key rotation already existed. **Remaining:** KMS-backed envelope encryption inside the product and a formal master-key lifecycle (HSM/KMS-rooted master keys, scheduled rotation policy) are still not implemented. **Residual severity: Medium**, down from High.
 
 ### 3. Audit logging (CC4.1, CC7.2)
 
@@ -109,8 +137,9 @@ Legend: ✅ in place · 🟡 partial · ❌ missing.
 - Audit export is scope-gated (`audit.read`/`policy.admin`).
 
 **What is missing / weak**
-- **Not tamper-evident.** `audit_events` is a mutable SQLite table keyed by autoincrement (`lib.rs:479`); no hash chaining, no signatures, no WORM, and a DB admin can `UPDATE`/`DELETE` rows. The test named `..._append_only_...` only asserts query scoping, not immutability. **Severity: High** (CC7.2 evidence integrity).
-  - **[PLANNED 2026-06-06]** *Implementation plan (not yet coded — deferred to keep this change set stable):* add a per-tenant **hash chain** to `audit_events`. On `append_audit_event`, compute `entry_hash = SHA-256(prev_hash ‖ canonical_json(event))` inside the same transaction that reads the current tail row's `entry_hash`, and store `prev_hash` + `entry_hash` columns. A `verify_audit_chain(tenant)` routine walks the chain and flags the first row whose recomputed hash diverges, making any in-place `UPDATE`/`DELETE` detectable. Phase 2: periodically sign/anchor the chain head (e.g. write the head hash to the AWS Object-Lock bucket already provisioned in the Terraform reference, or sign it with a KMS key) for external tamper evidence, and add retention + SIEM/log-shipping export. This is additive (new columns + new verify path) and preserves the existing `AuditEvent`/`append_audit_event` API. Effort ≈ 3–5 wks per the P0 backlog.
+- **Tamper-evidence.** ~~`audit_events` is a mutable SQLite table with no hash chaining.~~ **[REMEDIATED 2026-06-06]** A per-account **SHA-256 hash chain** is implemented. `append_audit_event` reads the current chain tail's `entry_hash` and inserts the new row inside one transaction (`unchecked_transaction` on the catalog's single owned connection, so the chain stays linear under the existing serialized concurrency model), computing `entry_hash = SHA-256("opensnow-audit-chain/v1" ‖ len-prefixed[prev_hash, account_id, org, event_json])`. The stored `event_json` bytes are hashed verbatim (not re-serialized) so verification is stable, and fields are length-prefixed so no boundary can be shifted to forge a collision. `verify_audit_chain(account_id)` walks the chain in id order, checks each row's `prev_hash` links to the prior `entry_hash` and that the recomputed hash matches, and returns the first broken row id + reason — so any in-place `UPDATE`/`DELETE` is detectable. New `prev_hash`/`entry_hash` columns are added to the CREATE-TABLE and backfilled via `ensure_column` for pre-existing DBs; legacy rows (empty `entry_hash`) are reported as `pre_chain` and skipped rather than failing verification. Tests cover intact chains, edited-row detection, deleted-row detection, per-account isolation, and legacy pre-chain rows (`crates/opensnow-catalog/src/lib.rs`). **Residual severity: Medium.**
+  - **DB-level append-only guard: documented, not enforced.** A SQLite `BEFORE UPDATE/DELETE` trigger raising on `audit_events` is feasible as defense-in-depth, but it (a) is droppable by anyone with the same DB access (so it is not true WORM and the hash chain remains the authoritative tamper-evidence control), and (b) would block the test/verification path that simulates an admin tamper. It was therefore deliberately not added; true immutability belongs at the storage layer (e.g. anchoring the chain head to the AWS Object-Lock bucket already provisioned in the Terraform reference, or KMS-signing the head).
+  - **[STILL PLANNED]** *Phase 2:* periodically sign/anchor the chain head externally (Object-Lock bucket or KMS signature) for off-box tamper evidence, plus retention enforcement and SIEM/log-shipping export.
 - **No retention or export to SIEM.** No retention policy, no log-shipping, no immutable sink. (AWS reference has an Object-Lock *bucket* but no code path that writes audit there.) **Severity: High.**
 - **Coverage gaps.** REST `execute_query` audit coverage is less explicit than pgwire's; admin/data-movement routes (`/tables/register`, `/export/postgres`) audit coverage should be verified. **Severity: Medium.**
 
@@ -163,9 +192,9 @@ Legend: ✅ in place · 🟡 partial · ❌ missing.
 **What is missing / weak**
 - ~~**`cargo audit` is `continue-on-error: true`**~~ **[REMEDIATED 2026-06-06]** `cargo audit` now runs as `cargo audit --deny warnings` with no `continue-on-error`, so known CVEs block merge/release. If a specific advisory is genuinely unfixable, scope it with `--ignore RUSTSEC-…` rather than reverting to warn-only.
 - **No SAST** (no CodeQL/Semgrep), **no container image scanning** (Trivy/Grype). ~~**no secret scanning**~~ **[REMEDIATED 2026-06-06]** a blocking **gitleaks** secret-scan job (full git-history, `fetch-depth: 0`) was added (`.github/workflows/ci.yml`). SAST and container scanning remain outstanding. **Residual severity: Medium.**
-- **No image signing.** DEPLOYMENT.md tells users to `cosign verify` (`docs/DEPLOYMENT.md:452`), but the release workflow has **no cosign/attestation step** — images are unsigned. This is a documentation-vs-implementation gap. **Severity: High.**
+- **Image signing.** ~~The release workflow has no cosign/attestation step — images are unsigned.~~ **[REMEDIATED 2026-06-06]** The release workflow now **signs container images keylessly with cosign** (Sigstore Fulcio/Rekor, via the workflow's GitHub OIDC identity, `cosign sign --recursive` on the pushed digest) and **attaches a syft-generated CycloneDX container SBOM as a signed in-toto attestation** (`cosign attest --recursive --type cyclonedx`). These steps are gated by `ENABLE_IMAGE_SIGNING` so forks/self-hosted runners without OIDC/registry access skip them cleanly instead of hard-failing the release; the `cosign verify` invocation in DEPLOYMENT.md now matches a real signature. **Residual severity: Low** (operational verification of the keyless trust policy still needs to be wired into deploy/admission).
 - **No documented branch protection, CODEOWNERS, required reviews, or signed commits** discoverable in-repo. SOC 2 CC8.1 needs evidence that changes are reviewed/approved/tested before production. **Severity: High** (organizational).
-- SBOM is for the Rust binary only, not the full container image. **Severity: Medium.**
+- ~~SBOM is for the Rust binary only, not the full container image.~~ **[REMEDIATED 2026-06-06]** A **full container-image SBOM** (OS packages + dependencies) is now generated with **syft** in the release workflow, in addition to the source-level `cargo-cyclonedx` SBOM, and is both uploaded as a release asset and attached as a signed attestation. **Residual severity: Low** (SLSA provenance attestation still outstanding).
 
 ### 8. Monitoring & incident response (CC7.3–7.5)
 
@@ -197,11 +226,11 @@ SOC 2 is fundamentally an **audit of the organization's control environment over
 
 **Technical (code-fixable in this repo)**
 - In-product TLS for HTTP + pgwire; mTLS between distributed components.
-- Real at-rest encryption (AES-256-GCM envelope + KMS) for catalog/data; replace `xor_keystream`.
-- Tamper-evident audit log (hash chain / signed segments / append-only sink) + retention + SIEM export.
+- ~~Replace `xor_keystream` with AES-256-GCM~~ (done); ~~data-key rotation~~ (done, key-ring + re-seal). **Still needed:** at-rest encryption + KMS envelope for catalog/warehouse data.
+- ~~Tamper-evident audit log hash chain~~ (done). **Still needed:** external head anchoring/signing + retention + SIEM export.
 - Robust authorization: parser-based policy analysis, row-level security, column masking, data classification/tagging.
 - HTTP rate limiting; backup/restore tooling for the catalog; OTLP alerting rules.
-- CI: make `cargo audit` blocking; add SAST, container scan, secret scan, image signing (cosign) + attestations; full-image SBOM.
+- CI: ~~make `cargo audit` blocking~~ (done); ~~secret scan~~ (done); ~~image signing (cosign) + attestations; full-image SBOM~~ (done). **Still needed:** SAST (CodeQL) + container image vulnerability scan (Trivy/Grype).
 - GDPR DSAR/erasure/retention as real platform features (not sample SQL).
 
 **Organizational (process/policy/audit — not code)**

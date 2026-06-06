@@ -16,6 +16,14 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Container image signing + container SBOM/attestation use cosign keyless
+  # (Sigstore OIDC) and push artifacts to the registry. They require:
+  #   * `id-token: write` (granted above) so the runner can mint an OIDC token,
+  #   * write access to the target registry (ghcr.io, via GITHUB_TOKEN).
+  # On forks or self-hosted runners without Sigstore/registry access these will
+  # not work; set ENABLE_IMAGE_SIGNING to "false" to skip them cleanly instead
+  # of failing the release. The unsigned image is still built and pushed.
+  ENABLE_IMAGE_SIGNING: "true"
 
 jobs:
   build-binaries:
@@ -114,6 +122,7 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push multi-arch Docker image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -123,6 +132,49 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # --- Supply-chain provenance for the container image (CC8.1) ---
+      # Each step below is gated on ENABLE_IMAGE_SIGNING so a fork/self-hosted
+      # runner without Sigstore/registry access can skip signing without
+      # breaking the release (the image itself is already built + pushed above).
+      - name: Install cosign
+        if: env.ENABLE_IMAGE_SIGNING == 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (container SBOM)
+        if: env.ENABLE_IMAGE_SIGNING == 'true'
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate container SBOM (CycloneDX) and sign + attest image
+        if: env.ENABLE_IMAGE_SIGNING == 'true'
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          REF="${IMAGE}@${DIGEST}"
+          echo "Generating container SBOM for ${REF}"
+          # Full-image SBOM (OS packages + Rust deps), complementing the
+          # source-only cargo-cyclonedx SBOM produced by the `sbom` job.
+          syft "${REF}" -o cyclonedx-json > container-sbom.cyclonedx.json
+          echo "Keyless-signing image ${REF}"
+          # Keyless signature via the GitHub OIDC identity (Sigstore Fulcio /
+          # Rekor). The signature is stored alongside the image in the registry.
+          cosign sign --recursive "${REF}"
+          echo "Attaching SBOM as a signed in-toto attestation"
+          cosign attest --recursive \
+            --predicate container-sbom.cyclonedx.json \
+            --type cyclonedx \
+            "${REF}"
+
+      - name: Upload container SBOM artifact
+        if: env.ENABLE_IMAGE_SIGNING == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-sbom-cyclonedx
+          path: container-sbom.cyclonedx.json
+          retention-days: 90
 
   sbom:
     name: Generate SBOM
@@ -163,6 +215,9 @@ jobs:
           find artifacts -name '*.tar.gz' -exec cp {} release-assets/ \;
           find artifacts -name '*.sha256' -exec cp {} release-assets/ \;
           find artifacts -name 'bom.json' -exec cp {} release-assets/sbom-cyclonedx.json \;
+          # Container-image SBOM (present only when image signing was enabled).
+          find artifacts -name 'container-sbom.cyclonedx.json' \
+            -exec cp {} release-assets/container-sbom-cyclonedx.json \; || true
 
       - name: Generate changelog
         id: changelog
@@ -191,7 +246,18 @@ jobs:
             See the `.sha256` files for each binary.
 
             ## SBOM
-            A CycloneDX SBOM is attached as `sbom-cyclonedx.json`.
+            A source CycloneDX SBOM is attached as `sbom-cyclonedx.json`, and a
+            full container-image SBOM as `container-sbom-cyclonedx.json` (when
+            image signing is enabled).
+
+            ## Image signing
+            Container images are signed keylessly with cosign (Sigstore) and
+            carry a signed CycloneDX SBOM attestation. Verify with:
+            ```
+            cosign verify ghcr.io/${{ github.repository }}:${{ github.ref_name }} \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.github/workflows/release.yml@.*" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            ```
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

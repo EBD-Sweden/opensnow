@@ -372,16 +372,47 @@ pub trait SecretProvider: Send + Sync {
 /// so legacy ciphertext is detectable and can be migrated/rotated.
 const SEALED_PAYLOAD_V1: &str = "v1";
 
+/// Versioned sealed-payload format tag that carries an explicit data-key id, to
+/// support key rotation.
+///
+/// Layout: `"v2." + key_id + "." + hex(nonce[12]) + "." + hex(ciphertext||tag)`.
+/// The `v2.` prefix and the key id are both bound as AEAD associated data so a
+/// payload cannot be re-attributed to a different key without failing
+/// authentication. `v1` payloads (no key id) remain fully readable: they are
+/// always decrypted with the implicit `v1` legacy key.
+const SEALED_PAYLOAD_V2: &str = "v2";
+
+/// Key id assigned to the implicit legacy key derived from the original master
+/// key. `v1`-format payloads are always opened with this key.
+const LEGACY_KEY_ID: &str = "v1";
+
 /// AES-256-GCM nonce length in bytes (96-bit nonce, the AEAD standard size).
 const AES_GCM_NONCE_LEN: usize = 12;
+
+/// A single named AES-256 data key in the store's key ring.
+#[derive(Clone)]
+struct DataKey {
+    id: String,
+    key: [u8; 32],
+}
+
+impl fmt::Debug for DataKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DataKey")
+            .field("id", &self.id)
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
 
 pub struct TrustedSecretStore {
     conn: Arc<Mutex<Connection>>,
     provider: SecretProviderConfig,
-    /// Derived 32-byte AES-256 data key. Derived deterministically from the
-    /// configured master-key source via SHA-256 so arbitrary-length operator
-    /// key material maps to a valid 256-bit key without weakening key handling.
-    data_key: [u8; 32],
+    /// All data keys this store can decrypt with, keyed by id. The legacy key
+    /// (`LEGACY_KEY_ID`) is always present so `v1` payloads stay readable.
+    keys: Vec<DataKey>,
+    /// Id of the key new seals are written with (the "current" key).
+    current_key_id: String,
 }
 
 impl TrustedSecretStore {
@@ -389,13 +420,92 @@ impl TrustedSecretStore {
         if master_key.is_empty() {
             bail!("local secret store master key must not be empty");
         }
+        let legacy = DataKey {
+            id: LEGACY_KEY_ID.to_string(),
+            key: derive_data_key(master_key.as_bytes()),
+        };
         let store = Self {
             conn,
             provider: SecretProviderConfig::local_dev("local-dev-sealed-store"),
-            data_key: derive_data_key(master_key.as_bytes()),
+            keys: vec![legacy],
+            current_key_id: LEGACY_KEY_ID.to_string(),
         };
         store.init_schema()?;
         Ok(store)
+    }
+
+    /// Register an additional data-key version derived from new master-key
+    /// material and (by default) promote it to the current encryption key.
+    ///
+    /// Old ciphertext remains openable because the previous keys stay in the
+    /// ring; new seals use `key_id` and are written in the `v2.<key_id>.…`
+    /// format. This is the building block for key rotation: register a new key,
+    /// then `reseal_secret`/`reseal_all` to migrate existing handles forward.
+    ///
+    /// `key_id` must be unique and must not be the empty string or contain `.`
+    /// (the payload field separator). Returns the store for chaining.
+    pub fn with_rotated_key(mut self, key_id: &str, master_key: &str) -> Result<Self> {
+        self.add_key(key_id, master_key, true)?;
+        Ok(self)
+    }
+
+    /// Register an additional data-key version without changing which key is
+    /// current. Use this to load *retired* keys so old ciphertext stays
+    /// readable while a different key remains the active encryption key.
+    pub fn register_decrypt_key(&mut self, key_id: &str, master_key: &str) -> Result<()> {
+        self.add_key(key_id, master_key, false)
+    }
+
+    /// Promote an already-registered key to be the current encryption key.
+    pub fn set_current_key(&mut self, key_id: &str) -> Result<()> {
+        if !self.keys.iter().any(|k| k.id == key_id) {
+            bail!("cannot set current key: unknown key id '{key_id}'");
+        }
+        self.current_key_id = key_id.to_string();
+        Ok(())
+    }
+
+    /// The id of the key new seals are currently written with.
+    pub fn current_key_id(&self) -> &str {
+        &self.current_key_id
+    }
+
+    fn add_key(&mut self, key_id: &str, master_key: &str, make_current: bool) -> Result<()> {
+        if key_id.is_empty() {
+            bail!("data-key id must not be empty");
+        }
+        if key_id.contains('.') {
+            bail!("data-key id must not contain '.' (the sealed-payload separator)");
+        }
+        if master_key.is_empty() {
+            bail!("data-key master material must not be empty");
+        }
+        if self.keys.iter().any(|k| k.id == key_id) {
+            bail!("data-key id '{key_id}' is already registered");
+        }
+        self.keys.push(DataKey {
+            id: key_id.to_string(),
+            key: derive_data_key(master_key.as_bytes()),
+        });
+        if make_current {
+            self.current_key_id = key_id.to_string();
+        }
+        Ok(())
+    }
+
+    fn key_for(&self, key_id: &str) -> Result<&DataKey> {
+        self.keys
+            .iter()
+            .find(|k| k.id == key_id)
+            .ok_or_else(|| anyhow!("no data key registered for key id '{key_id}'"))
+    }
+
+    fn current_key(&self) -> &DataKey {
+        // Invariant: current_key_id always refers to a registered key.
+        self.keys
+            .iter()
+            .find(|k| k.id == self.current_key_id)
+            .expect("current key id must reference a registered key")
     }
 
     fn init_schema(&self) -> Result<()> {
@@ -418,68 +528,129 @@ impl TrustedSecretStore {
         Ok(())
     }
 
-    /// Seal a secret with AES-256-GCM using a fresh random 96-bit nonce.
+    /// Seal a secret with AES-256-GCM using a fresh random 96-bit nonce and the
+    /// current data key.
     ///
-    /// The output is authenticated (GCM tag appended to the ciphertext) and
-    /// versioned (`v1.<nonce>.<ciphertext||tag>`). The version tag is bound as
-    /// AEAD associated data so a downgrade to a different format fails to
-    /// authenticate. Returns an error only if the AEAD primitive itself fails,
-    /// which is not expected for valid keys/nonces.
+    /// The output is authenticated (GCM tag appended to the ciphertext). When
+    /// the current key is the implicit legacy key, the back-compatible
+    /// `v1.<nonce>.<ciphertext||tag>` format is emitted; when a rotated key is
+    /// current, the key-tagged `v2.<key_id>.<nonce>.<ciphertext||tag>` format is
+    /// used. In both cases the format tag (and, for `v2`, the key id) is bound
+    /// as AEAD associated data so a downgrade/re-attribution fails to
+    /// authenticate.
     fn seal(&self, raw_secret: &str) -> Result<String> {
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.data_key));
+        let data_key = self.current_key();
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&data_key.key));
         let mut nonce_bytes = [0u8; AES_GCM_NONCE_LEN];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let ciphertext = cipher
-            .encrypt(
-                nonce,
-                Payload {
-                    msg: raw_secret.as_bytes(),
-                    aad: SEALED_PAYLOAD_V1.as_bytes(),
-                },
-            )
-            .map_err(|_| anyhow!("failed to seal secret with AES-256-GCM"))?;
-        Ok(format!(
-            "{}.{}.{}",
-            SEALED_PAYLOAD_V1,
-            hex_encode(&nonce_bytes),
-            hex_encode(&ciphertext)
-        ))
+        if data_key.id == LEGACY_KEY_ID {
+            // Back-compat: legacy key writes the unversioned-key `v1.` format.
+            let ciphertext = cipher
+                .encrypt(
+                    nonce,
+                    Payload {
+                        msg: raw_secret.as_bytes(),
+                        aad: SEALED_PAYLOAD_V1.as_bytes(),
+                    },
+                )
+                .map_err(|_| anyhow!("failed to seal secret with AES-256-GCM"))?;
+            Ok(format!(
+                "{}.{}.{}",
+                SEALED_PAYLOAD_V1,
+                hex_encode(&nonce_bytes),
+                hex_encode(&ciphertext)
+            ))
+        } else {
+            let aad = v2_aad(&data_key.id);
+            let ciphertext = cipher
+                .encrypt(
+                    nonce,
+                    Payload {
+                        msg: raw_secret.as_bytes(),
+                        aad: aad.as_bytes(),
+                    },
+                )
+                .map_err(|_| anyhow!("failed to seal secret with AES-256-GCM"))?;
+            Ok(format!(
+                "{}.{}.{}.{}",
+                SEALED_PAYLOAD_V2,
+                data_key.id,
+                hex_encode(&nonce_bytes),
+                hex_encode(&ciphertext)
+            ))
+        }
     }
 
     /// Open a sealed payload, verifying authenticity (tamper/wrong-key both
-    /// fail). Legacy unversioned XOR payloads are rejected with an actionable
-    /// error so they can be re-sealed/rotated rather than silently trusted.
+    /// fail) using the matching key from the key ring. `v1` payloads use the
+    /// legacy key; `v2.<key_id>.…` payloads use the named key. Legacy
+    /// unversioned XOR payloads are rejected with an actionable error so they
+    /// can be re-sealed/rotated rather than silently trusted.
     fn unseal(&self, sealed_payload: &str) -> Result<String> {
-        let mut parts = sealed_payload.splitn(3, '.');
-        let version = parts
+        let version = sealed_payload
+            .split('.')
             .next()
             .ok_or_else(|| anyhow!("invalid sealed secret payload"))?;
-        if version != SEALED_PAYLOAD_V1 {
-            bail!(
-                "sealed secret uses an unsupported or legacy format (expected '{SEALED_PAYLOAD_V1}'); \
+        match version {
+            SEALED_PAYLOAD_V1 => {
+                let mut parts = sealed_payload.splitn(3, '.');
+                let _ = parts.next();
+                let nonce_hex = parts
+                    .next()
+                    .ok_or_else(|| anyhow!("invalid sealed secret payload: missing nonce"))?;
+                let cipher_hex = parts
+                    .next()
+                    .ok_or_else(|| anyhow!("invalid sealed secret payload: missing ciphertext"))?;
+                self.open_aead(
+                    self.key_for(LEGACY_KEY_ID)?,
+                    nonce_hex,
+                    cipher_hex,
+                    SEALED_PAYLOAD_V1.as_bytes(),
+                )
+            }
+            SEALED_PAYLOAD_V2 => {
+                let mut parts = sealed_payload.splitn(4, '.');
+                let _ = parts.next();
+                let key_id = parts
+                    .next()
+                    .ok_or_else(|| anyhow!("invalid sealed secret payload: missing key id"))?;
+                let nonce_hex = parts
+                    .next()
+                    .ok_or_else(|| anyhow!("invalid sealed secret payload: missing nonce"))?;
+                let cipher_hex = parts
+                    .next()
+                    .ok_or_else(|| anyhow!("invalid sealed secret payload: missing ciphertext"))?;
+                let aad = v2_aad(key_id);
+                self.open_aead(self.key_for(key_id)?, nonce_hex, cipher_hex, aad.as_bytes())
+            }
+            _ => bail!(
+                "sealed secret uses an unsupported or legacy format (expected '{SEALED_PAYLOAD_V1}' or '{SEALED_PAYLOAD_V2}'); \
                  rotate this handle to re-seal it with AES-256-GCM"
-            );
+            ),
         }
-        let nonce_hex = parts
-            .next()
-            .ok_or_else(|| anyhow!("invalid sealed secret payload: missing nonce"))?;
-        let cipher_hex = parts
-            .next()
-            .ok_or_else(|| anyhow!("invalid sealed secret payload: missing ciphertext"))?;
+    }
+
+    fn open_aead(
+        &self,
+        data_key: &DataKey,
+        nonce_hex: &str,
+        cipher_hex: &str,
+        aad: &[u8],
+    ) -> Result<String> {
         let nonce_bytes = hex_decode(nonce_hex)?;
         if nonce_bytes.len() != AES_GCM_NONCE_LEN {
             bail!("invalid sealed secret payload: bad nonce length");
         }
         let ciphertext = hex_decode(cipher_hex)?;
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.data_key));
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&data_key.key));
         let nonce = Nonce::from_slice(&nonce_bytes);
         let plain = cipher
             .decrypt(
                 nonce,
                 Payload {
                     msg: &ciphertext,
-                    aad: SEALED_PAYLOAD_V1.as_bytes(),
+                    aad,
                 },
             )
             .map_err(|_| {
@@ -488,6 +659,52 @@ impl TrustedSecretStore {
                 )
             })?;
         String::from_utf8(plain).context("sealed secret payload is not UTF-8")
+    }
+
+    /// Re-seal a single existing handle's secret with the current data key.
+    ///
+    /// Reads the stored payload, opens it with whichever key sealed it, and
+    /// writes it back sealed under the current key (bumping the metadata
+    /// version). This is the per-handle rotation step after a new key is
+    /// registered as current. The handle must be active.
+    pub fn reseal_secret(&self, organization_id: &str, handle_id: &str) -> Result<SecretMetadata> {
+        let plaintext = {
+            let db = self.conn.lock().unwrap();
+            let row: Option<(String, String)> = db
+                .query_row(
+                    "SELECT state, sealed_payload FROM secret_handles
+                     WHERE organization_id = ?1 AND handle_id = ?2",
+                    params![organization_id, handle_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let (state, sealed_payload) = row
+                .ok_or_else(|| anyhow!("secret handle not found: {organization_id}/{handle_id}"))?;
+            if state != "active" {
+                bail!("cannot re-seal revoked secret handle: {organization_id}/{handle_id}");
+            }
+            self.unseal(&sealed_payload)?
+        };
+        // rotate_secret re-seals with the current key and bumps the version.
+        self.rotate_secret(organization_id, handle_id, &plaintext)
+    }
+
+    /// Re-seal every active handle for an organization with the current data
+    /// key. Returns the list of handle ids that were re-sealed. Convenience
+    /// wrapper over `reseal_secret` for a full key rotation pass.
+    pub fn reseal_all(&self, organization_id: &str) -> Result<Vec<String>> {
+        let handles: Vec<String> = self
+            .list_secrets(organization_id)?
+            .into_iter()
+            .filter(|m| m.state == SecretState::Active)
+            .map(|m| m.handle_id)
+            .collect();
+        let mut resealed = Vec::with_capacity(handles.len());
+        for handle_id in handles {
+            self.reseal_secret(organization_id, &handle_id)?;
+            resealed.push(handle_id);
+        }
+        Ok(resealed)
     }
 
     fn metadata_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SecretMetadata> {
@@ -676,6 +893,13 @@ fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Associated data bound to a `v2` (key-tagged) sealed payload. Binding both
+/// the format tag and the key id prevents a payload from being silently
+/// re-attributed to a different key version without failing authentication.
+fn v2_aad(key_id: &str) -> String {
+    format!("{SEALED_PAYLOAD_V2}.{key_id}")
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -762,6 +986,168 @@ mod tests {
         let legacy = format!("{}.{}", hex_encode(&[0u8; 16]), hex_encode(b"whatever"));
         let err = store.unseal(&legacy).unwrap_err().to_string();
         assert!(err.contains("legacy format"), "got: {err}");
+    }
+
+    fn descriptor(org: &str, handle: &str) -> SecretHandleDescriptor {
+        use crate::contract::{SecretPurpose, SecretType};
+        SecretHandleDescriptor::new(
+            org,
+            handle,
+            SecretType::ObjectStorageCredential,
+            SecretPurpose::ObjectStorageAccess,
+        )
+    }
+
+    #[test]
+    fn rotated_key_seals_in_v2_format_and_opens() {
+        let store = new_store("master-key-one")
+            .with_rotated_key("k2", "master-key-two")
+            .expect("rotate");
+        assert_eq!(store.current_key_id(), "k2");
+        let sealed = store.seal("rotated-secret").expect("seal");
+        assert!(
+            sealed.starts_with("v2.k2."),
+            "current rotated key must use v2 key-tagged format: {sealed}"
+        );
+        assert_eq!(store.unseal(&sealed).expect("unseal"), "rotated-secret");
+    }
+
+    #[test]
+    fn old_v1_ciphertext_still_opens_after_rotation() {
+        // Seal with the legacy key (v1 format), then rotate the current key.
+        let v1_store = new_store("master-key-one");
+        let legacy_payload = v1_store.seal("legacy-secret").expect("seal v1");
+        assert!(legacy_payload.starts_with("v1."));
+
+        let rotated = v1_store
+            .with_rotated_key("k2", "master-key-two")
+            .expect("rotate");
+        // Old v1 ciphertext opens (legacy key kept in the ring); new writes use k2.
+        assert_eq!(
+            rotated.unseal(&legacy_payload).expect("unseal legacy"),
+            "legacy-secret"
+        );
+        assert!(rotated.seal("new-secret").unwrap().starts_with("v2.k2."));
+    }
+
+    #[test]
+    fn v2_payload_fails_with_unregistered_key_id() {
+        let sealer = new_store("master-key-one")
+            .with_rotated_key("k2", "master-key-two")
+            .unwrap();
+        let sealed = sealer.seal("secret").unwrap();
+        // A fresh store that only knows the legacy key cannot open a k2 payload.
+        let other = new_store("master-key-one");
+        let err = other.unseal(&sealed).unwrap_err().to_string();
+        assert!(err.contains("no data key registered"), "got: {err}");
+    }
+
+    #[test]
+    fn v2_payload_rejects_key_id_substitution() {
+        // Register two rotated keys; a payload sealed under k2 must not open if
+        // its key-id field is swapped to k3 (AAD binds the id).
+        let mut store = new_store("master-key-one")
+            .with_rotated_key("k2", "master-key-two")
+            .unwrap()
+            .with_rotated_key("k3", "master-key-three")
+            .unwrap();
+        store.set_current_key("k2").unwrap();
+        let sealed = store.seal("bind-me").unwrap();
+        assert!(sealed.starts_with("v2.k2."));
+        let forged = sealed.replacen("v2.k2.", "v2.k3.", 1);
+        let err = store.unseal(&forged).unwrap_err().to_string();
+        assert!(err.contains("authentication failed"), "got: {err}");
+    }
+
+    #[test]
+    fn reseal_migrates_handle_to_current_key() {
+        let conn = Arc::new(Mutex::new(Connection::open_in_memory().expect("sqlite")));
+        let store = TrustedSecretStore::local_dev(conn, "master-key-one").expect("store");
+        let meta = store
+            .create_secret(descriptor("org_acme", "db-pass"), "p@ss")
+            .expect("create");
+        assert_eq!(meta.version, 1);
+        // The stored payload is v1 (legacy current key).
+        let raw_v1: String = {
+            let db = store.conn.lock().unwrap();
+            db.query_row(
+                "SELECT sealed_payload FROM secret_handles WHERE organization_id=?1 AND handle_id=?2",
+                params!["org_acme", "db-pass"],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(raw_v1.starts_with("v1."));
+
+        // Register + promote a new key, then re-seal.
+        let mut store = store;
+        store.register_decrypt_key("k2", "master-key-two").unwrap();
+        store.set_current_key("k2").unwrap();
+        let resealed = store.reseal_secret("org_acme", "db-pass").expect("reseal");
+        assert_eq!(resealed.version, 2, "reseal bumps the metadata version");
+
+        let raw_v2: String = {
+            let db = store.conn.lock().unwrap();
+            db.query_row(
+                "SELECT sealed_payload FROM secret_handles WHERE organization_id=?1 AND handle_id=?2",
+                params!["org_acme", "db-pass"],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(
+            raw_v2.starts_with("v2.k2."),
+            "re-sealed payload must use the current key: {raw_v2}"
+        );
+        // Value is preserved and resolvable through the public API.
+        assert_eq!(
+            store
+                .resolve_secret("org_acme", "db-pass")
+                .unwrap()
+                .expose_to_trusted_execution_path(),
+            "p@ss"
+        );
+    }
+
+    #[test]
+    fn reseal_all_migrates_every_active_handle() {
+        let conn = Arc::new(Mutex::new(Connection::open_in_memory().expect("sqlite")));
+        let mut store = TrustedSecretStore::local_dev(conn, "master-key-one").expect("store");
+        for i in 0..3 {
+            store
+                .create_secret(descriptor("org_acme", &format!("h{i}")), &format!("v{i}"))
+                .unwrap();
+        }
+        store.register_decrypt_key("k2", "master-key-two").unwrap();
+        store.set_current_key("k2").unwrap();
+        let resealed = store.reseal_all("org_acme").expect("reseal all");
+        assert_eq!(resealed.len(), 3);
+        // Every payload now opens and uses the current key.
+        let db = store.conn.lock().unwrap();
+        let mut stmt = db
+            .prepare("SELECT sealed_payload FROM secret_handles WHERE organization_id='org_acme'")
+            .unwrap();
+        let payloads: Vec<String> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(payloads.len(), 3);
+        assert!(payloads.iter().all(|p| p.starts_with("v2.k2.")));
+    }
+
+    #[test]
+    fn duplicate_or_invalid_key_ids_are_rejected() {
+        let mut store = new_store("master-key-one");
+        assert!(
+            store.register_decrypt_key("v1", "x").is_err(),
+            "dup legacy id"
+        );
+        assert!(store.register_decrypt_key("", "x").is_err(), "empty id");
+        assert!(store.register_decrypt_key("a.b", "x").is_err(), "dotted id");
+        store.register_decrypt_key("k2", "master-key-two").unwrap();
+        assert!(store.register_decrypt_key("k2", "y").is_err(), "dup id");
+        assert!(store.set_current_key("nope").is_err(), "unknown current");
     }
 
     #[cfg(unix)]
