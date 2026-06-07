@@ -9,6 +9,11 @@ host       = "127.0.0.1"
 
 [storage]
 # ── Local filesystem (dev / single-node) ──────────────────────────────────────
+# warehouse_path may be a local directory OR an object-store URL (s3://, gs://,
+# gcs://, az://). When it is an object-store URL, table materialization (CREATE
+# TABLE AS SELECT, materialized views, trusted COPY INTO) writes Parquet through
+# the registered store — set the matching bucket below (e.g. s3_bucket) so the
+# warehouse URI resolves. Example: warehouse_path = "s3://my-opensnow-data/warehouse"
 warehouse_path = "~/.opensnow/warehouse"
 
 # ── AWS S3 / MinIO / S3-compatible ────────────────────────────────────────────

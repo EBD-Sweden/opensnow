@@ -4,9 +4,6 @@ use std::sync::Arc;
 use arrow::array::{Int64Array, RecordBatch, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 
-use parquet::arrow::ArrowWriter;
-use parquet::basic::Compression;
-use parquet::file::properties::WriterProperties;
 use tracing::info;
 
 use crate::engine::OpenSnowEngine;
@@ -627,24 +624,16 @@ async fn handle_copy_into(engine: &OpenSnowEngine, sql: &str) -> Result<Vec<Reco
         return Ok(vec![]);
     }
 
-    // Write to warehouse as Parquet
+    // Write to warehouse as Parquet (local filesystem or object store).
     let schema = batches[0].schema();
-    let warehouse = engine.warehouse_path();
-    let table_dir = format!("{warehouse}/opensnow/public");
-    std::fs::create_dir_all(&table_dir)?;
-    let out_path = format!("{table_dir}/{table_name}.parquet");
-
-    let props = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(Default::default()))
-        .build();
-    let file = std::fs::File::create(&out_path)?;
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
-    let mut total_rows = 0usize;
-    for batch in &batches {
-        total_rows += batch.num_rows();
-        writer.write(batch)?;
-    }
-    writer.close()?;
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    let relative = format!("opensnow/public/{table_name}.parquet");
+    let out_path = engine
+        .write_warehouse_parquet(&relative, schema, &batches)
+        .await
+        .map_err(|e| {
+            crate::error::OpenSnowError::Internal(format!("COPY INTO {table_name}: {e:#}"))
+        })?;
 
     // Register the new table
     ctx.deregister_table(&temp_name)?;
@@ -698,22 +687,14 @@ async fn handle_ctas(engine: &OpenSnowEngine, sql: &str) -> Result<Vec<RecordBat
     }
 
     let schema = batches[0].schema();
-    let warehouse = engine.warehouse_path();
-    let table_dir = format!("{warehouse}/opensnow/public");
-    std::fs::create_dir_all(&table_dir)?;
-    let out_path = format!("{table_dir}/{table_name}.parquet");
-
-    let props = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(Default::default()))
-        .build();
-    let file = std::fs::File::create(&out_path)?;
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
-    let mut total_rows = 0usize;
-    for batch in &batches {
-        total_rows += batch.num_rows();
-        writer.write(batch)?;
-    }
-    writer.close()?;
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    let relative = format!("opensnow/public/{table_name}.parquet");
+    let out_path = engine
+        .write_warehouse_parquet(&relative, schema, &batches)
+        .await
+        .map_err(|e| {
+            crate::error::OpenSnowError::Internal(format!("CREATE TABLE {table_name}: {e:#}"))
+        })?;
 
     ctx.register_parquet(table_name, &out_path, Default::default())
         .await?;
@@ -757,10 +738,6 @@ async fn handle_describe(engine: &OpenSnowEngine, table: &str) -> Result<Vec<Rec
 
 // ── Materialized view handlers ──────────────────────────────────────────
 
-fn materialized_view_path(warehouse_path: &str, name: &str) -> String {
-    format!("{warehouse_path}/opensnow/materialized_views/{name}.parquet")
-}
-
 /// Execute `select_sql`, write the result as a Parquet file, register it as a
 /// table named `name`, and return the row count.
 async fn materialize_query_to_parquet(
@@ -772,11 +749,6 @@ async fn materialize_query_to_parquet(
     let df = ctx.sql(select_sql).await?;
     let batches = df.collect().await?;
 
-    let warehouse = engine.warehouse_path();
-    let mv_dir = format!("{warehouse}/opensnow/materialized_views");
-    std::fs::create_dir_all(&mv_dir)?;
-    let out_path = materialized_view_path(warehouse, name);
-
     let schema = if let Some(b) = batches.first() {
         b.schema()
     } else {
@@ -784,18 +756,14 @@ async fn materialize_query_to_parquet(
             "Materialized view query produced no schema (empty result)".into(),
         ));
     };
-
-    let props = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(Default::default()))
-        .build();
-    let file = std::fs::File::create(&out_path)?;
-    let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
-    let mut total_rows = 0usize;
-    for batch in &batches {
-        total_rows += batch.num_rows();
-        writer.write(batch)?;
-    }
-    writer.close()?;
+    let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+    let relative = format!("opensnow/materialized_views/{name}.parquet");
+    let out_path = engine
+        .write_warehouse_parquet(&relative, schema, &batches)
+        .await
+        .map_err(|e| {
+            crate::error::OpenSnowError::Internal(format!("materialized view {name}: {e:#}"))
+        })?;
 
     // Re-register: deregister first to ensure a fresh table reference.
     let _ = ctx.deregister_table(name);

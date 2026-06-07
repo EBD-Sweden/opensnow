@@ -2,12 +2,17 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use arrow::array::RecordBatch;
+use arrow::datatypes::SchemaRef;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::*;
 use object_store::ObjectStore;
+use object_store::PutPayload;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::gcp::GoogleCloudStorageBuilder;
+use parquet::arrow::ArrowWriter;
+use parquet::basic::Compression;
+use parquet::file::properties::WriterProperties;
 use tracing::info;
 use url::Url;
 
@@ -47,6 +52,20 @@ const CLOUD_REQUEST_COALESCE_BYTES: &str = "16777216"; // 16 MB
 /// 64MB = typical row group size; fetches entire row group in one request.
 #[allow(dead_code)]
 const CLOUD_PREFETCH_BYTES: &str = "67108864"; // 64 MB
+
+/// Object-storage URL schemes OpenSnow can use as a warehouse root for writes.
+/// When `warehouse_path` starts with one of these, table materialization writes
+/// Parquet through the registered object store instead of the local filesystem.
+const OBJECT_STORE_SCHEMES: &[&str] = &["s3://", "gs://", "gcs://", "az://", "azure://", "abfs://"];
+
+/// True when `path` is an object-storage URL (vs a local filesystem directory).
+pub fn is_object_store_url(path: &str) -> bool {
+    OBJECT_STORE_SCHEMES.iter().any(|s| path.starts_with(s))
+}
+
+fn should_skip_materialized_view_path(path: &str) -> bool {
+    !is_object_store_url(path) && !std::path::Path::new(path).exists()
+}
 
 // ─── Engine configuration ────────────────────────────────────────────────────
 
@@ -177,20 +196,30 @@ impl OpenSnowEngine {
 
         // Ensure warehouse directory exists for local storage before opening the
         // catalog. Failing fast here avoids creating/upgrading catalog state for
-        // a demo instance that cannot write table data.
-        let warehouse_path = std::path::Path::new(&config.warehouse_path);
-        if warehouse_path.exists() && !warehouse_path.is_dir() {
-            anyhow::bail!(
-                "warehouse path exists but is not a directory: {}; set [storage].warehouse_path to a writable directory or move the file before startup",
-                warehouse_path.display()
+        // a demo instance that cannot write table data. Skipped when the
+        // warehouse root is object storage (s3://, gs://, az://) — there the
+        // bucket is provisioned out-of-band and writes go through the registered
+        // object store, not the local filesystem.
+        if is_object_store_url(&config.warehouse_path) {
+            info!(
+                "Warehouse root is object storage: {} (table materialization writes Parquet via the registered object store)",
+                config.warehouse_path
             );
+        } else {
+            let warehouse_path = std::path::Path::new(&config.warehouse_path);
+            if warehouse_path.exists() && !warehouse_path.is_dir() {
+                anyhow::bail!(
+                    "warehouse path exists but is not a directory: {}; set [storage].warehouse_path to a writable directory or move the file before startup",
+                    warehouse_path.display()
+                );
+            }
+            std::fs::create_dir_all(warehouse_path).with_context(|| {
+                format!(
+                    "failed to create warehouse directory {}; check volume permissions or configure object storage/local persistence before startup",
+                    warehouse_path.display()
+                )
+            })?;
         }
-        std::fs::create_dir_all(warehouse_path).with_context(|| {
-            format!(
-                "failed to create warehouse directory {}; check volume permissions or configure object storage/local persistence before startup",
-                warehouse_path.display()
-            )
-        })?;
 
         // Open the catalog (SQLite)
         let catalog = Catalog::open(catalog_path)
@@ -446,7 +475,7 @@ impl OpenSnowEngine {
             .list_materialized_views()
             .map_err(|e| crate::error::OpenSnowError::Internal(format!("catalog error: {e}")))?;
         for mv in &views {
-            if !std::path::Path::new(&mv.parquet_path).exists() {
+            if should_skip_materialized_view_path(&mv.parquet_path) {
                 tracing::warn!(
                     "Materialized view '{}' parquet missing at {} — skipping registration",
                     mv.name,
@@ -602,6 +631,81 @@ impl OpenSnowEngine {
         &self.config.warehouse_path
     }
 
+    /// True when the warehouse root is object storage (s3://, gs://, …) rather
+    /// than a local directory.
+    pub fn warehouse_is_remote(&self) -> bool {
+        is_object_store_url(&self.config.warehouse_path)
+    }
+
+    /// Join a relative key (e.g. `"opensnow/public/foo.parquet"`) onto the
+    /// warehouse root, yielding a full URI — an object-store URL when the
+    /// warehouse is remote, or a local filesystem path otherwise.
+    pub fn warehouse_uri(&self, relative: &str) -> String {
+        format!(
+            "{}/{}",
+            self.config.warehouse_path.trim_end_matches('/'),
+            relative.trim_start_matches('/')
+        )
+    }
+
+    /// Persist `batches` as a single Parquet object/file at `relative` under the
+    /// warehouse root and return the URI to register with DataFusion.
+    ///
+    /// This is the one write path for table materialization (CTAS, materialized
+    /// views, COPY INTO). When the warehouse root is object storage it serializes
+    /// the Parquet in memory and `put`s it through the object store registered on
+    /// the session (S3/GCS/Azure); otherwise it writes to the local filesystem,
+    /// byte-for-byte as before. ZSTD-compressed in both cases.
+    pub async fn write_warehouse_parquet(
+        &self,
+        relative: &str,
+        schema: SchemaRef,
+        batches: &[RecordBatch],
+    ) -> anyhow::Result<String> {
+        let props = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(Default::default()))
+            .build();
+        let uri = self.warehouse_uri(relative);
+
+        if self.warehouse_is_remote() {
+            // Serialize to an in-memory buffer, then put into the object store.
+            let mut buf: Vec<u8> = Vec::new();
+            {
+                let mut writer = ArrowWriter::try_new(&mut buf, schema, Some(props))?;
+                for batch in batches {
+                    writer.write(batch)?;
+                }
+                writer.close()?;
+            }
+            let url =
+                Url::parse(&uri).with_context(|| format!("invalid warehouse object URI: {uri}"))?;
+            let store = self
+                .ctx
+                .runtime_env()
+                .object_store_registry
+                .get_store(&url)
+                .with_context(|| {
+                    format!("no object store registered for {uri}; configure [storage].s3_bucket/gcs_bucket to match the warehouse root")
+                })?;
+            let key = object_store::path::Path::from(url.path().trim_start_matches('/'));
+            store
+                .put(&key, PutPayload::from(buf))
+                .await
+                .with_context(|| format!("failed to write warehouse object {uri}"))?;
+        } else {
+            if let Some(parent) = std::path::Path::new(&uri).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let file = std::fs::File::create(&uri)?;
+            let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
+            for batch in batches {
+                writer.write(batch)?;
+            }
+            writer.close()?;
+        }
+        Ok(uri)
+    }
+
     /// Build the on-disk warehouse directory for a tenant. Each tenant lives
     /// in its own sub-directory under the configured `warehouse_path` so that
     /// per-tenant Parquet files cannot collide.
@@ -678,6 +782,140 @@ mod tests {
             !catalog.exists(),
             "catalog should not be created when storage preflight fails"
         );
+    }
+
+    #[test]
+    fn object_store_warehouse_roots_skip_local_path_checks() {
+        assert!(is_object_store_url("s3://opensnow-warehouse/prod"));
+        assert!(is_object_store_url("gs://opensnow-warehouse/prod"));
+        assert!(is_object_store_url("gcs://opensnow-warehouse/prod"));
+        assert!(is_object_store_url("az://opensnow-warehouse/prod"));
+        assert!(is_object_store_url("azure://opensnow-warehouse/prod"));
+        assert!(is_object_store_url(
+            "abfs://container@account.dfs.core.windows.net/prod"
+        ));
+        assert!(!is_object_store_url("/var/lib/opensnow/warehouse"));
+        assert!(!is_object_store_url("./warehouse"));
+    }
+
+    #[test]
+    fn warehouse_uri_joins_local_and_remote_roots_without_double_slashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let local_config = EngineConfig {
+            warehouse_path: dir.path().join("warehouse/").to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let local_catalog = dir.path().join("catalog-local.db");
+        let local = OpenSnowEngine::try_from_config_and_catalog(
+            local_config,
+            local_catalog.to_str().unwrap(),
+        )
+        .unwrap();
+        assert!(
+            local
+                .warehouse_uri("/opensnow/public/t.parquet")
+                .ends_with("/warehouse/opensnow/public/t.parquet")
+        );
+
+        let remote_config = EngineConfig {
+            warehouse_path: "s3://opensnow-warehouse/prod/".to_string(),
+            ..Default::default()
+        };
+        let remote_catalog = dir.path().join("catalog-remote.db");
+        let remote = OpenSnowEngine::try_from_config_and_catalog(
+            remote_config,
+            remote_catalog.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            remote.warehouse_uri("/opensnow/public/t.parquet"),
+            "s3://opensnow-warehouse/prod/opensnow/public/t.parquet"
+        );
+    }
+
+    // End-to-end: with an object-storage warehouse root, materialization must
+    // write the Parquet through the registered object store and the table must
+    // be queryable back. An in-memory store stands in for S3 (no network).
+    #[tokio::test]
+    async fn materializes_and_queries_table_on_object_store_warehouse() {
+        use arrow::array::Int64Array;
+        use arrow::datatypes::{DataType, Field, Schema};
+        use object_store::memory::InMemory;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = EngineConfig {
+            warehouse_path: "s3://opensnow-test-bucket/warehouse".to_string(),
+            ..Default::default()
+        };
+        let catalog = dir.path().join("catalog.db");
+        let engine =
+            OpenSnowEngine::try_from_config_and_catalog(config, catalog.to_str().unwrap()).unwrap();
+        assert!(engine.warehouse_is_remote());
+
+        // Stand-in for S3 registered at the warehouse bucket URL.
+        let bucket = Url::parse("s3://opensnow-test-bucket").unwrap();
+        engine
+            .session_context()
+            .register_object_store(&bucket, Arc::new(InMemory::new()));
+
+        let schema = Arc::new(Schema::new(vec![Field::new("n", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+
+        let uri = engine
+            .write_warehouse_parquet("opensnow/public/t.parquet", schema, &[batch])
+            .await
+            .unwrap();
+        assert_eq!(
+            uri,
+            "s3://opensnow-test-bucket/warehouse/opensnow/public/t.parquet"
+        );
+
+        engine
+            .session_context()
+            .register_parquet("t", &uri, Default::default())
+            .await
+            .unwrap();
+        let batches = engine
+            .execute_sql("SELECT sum(n) AS s FROM t")
+            .await
+            .unwrap();
+        let col = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(col.value(0), 6);
+    }
+
+    #[tokio::test]
+    async fn write_warehouse_parquet_persists_local_zstd_parquet() {
+        use arrow::array::Int64Array;
+        use arrow::datatypes::{DataType, Field, Schema};
+
+        let (dir, engine) = isolated_test_engine();
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int64, false)]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![Arc::new(Int64Array::from(vec![1, 2, 3]))],
+        )
+        .unwrap();
+
+        let uri = engine
+            .write_warehouse_parquet(
+                "/opensnow/public/local_write_test.parquet",
+                schema,
+                &[batch],
+            )
+            .await
+            .unwrap();
+
+        assert!(uri.ends_with("/opensnow/public/local_write_test.parquet"));
+        assert!(std::path::Path::new(&uri).is_file());
+        assert!(uri.starts_with(dir.path().join("warehouse").to_str().unwrap()));
     }
 
     #[tokio::test]
