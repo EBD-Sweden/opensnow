@@ -25,6 +25,7 @@ use crate::tenant::{TenantId, tenant_middleware};
 pub type AppState = EngineHandle;
 
 pub(crate) const APP_UI: &str = include_str!("../static/app.html");
+pub(crate) const PUBLIC_TEST_UI: &str = include_str!("../static/index.html");
 // Vendored Vega-Lite (BSD) so the Build tab's charts render with no external CDN.
 const VEGA_JS: &str = include_str!("../static/vendor/vega.min.js");
 const VEGA_LITE_JS: &str = include_str!("../static/vendor/vega-lite.min.js");
@@ -141,6 +142,7 @@ pub fn create_router_with_auth_and_buffer(
 
     let mut router = Router::new()
         .route("/", get(query_ui))
+        .route("/public-test", get(public_test_ui))
         .route("/docs/DEPLOYMENT.md", get(deployment_doc))
         .route("/docs/SQL_COMPATIBILITY.md", get(sql_compatibility_doc))
         .route("/docs/PUBLIC_TEST_PATH.md", get(public_test_path_doc))
@@ -230,6 +232,10 @@ pub fn create_router_with_auth_and_buffer(
 
 async fn query_ui() -> Html<String> {
     ui_asset("app.html", APP_UI)
+}
+
+async fn public_test_ui() -> Html<String> {
+    ui_asset("index.html", PUBLIC_TEST_UI)
 }
 
 /// Serve a UI asset from `OPENSNOW_UI_DIR` when set (so HTML can be hot-swapped
@@ -1482,6 +1488,31 @@ mod tenant_tests {
             assert!(
                 !html.contains(forbidden),
                 "internal copy leaked to public demo: {forbidden}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_demo_html_exposes_external_tester_onboarding() {
+        let router = make_router();
+        let resp = router
+            .oneshot(Request::get("/public-test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(bytes.to_vec()).unwrap();
+
+        for required in [
+            "Run your first OpenSnow query in under a minute.",
+            "first-run path for external testers",
+            "loads safe demo data",
+            "copyable psql/pgwire/API commands",
+            "Hosted evaluation sandbox accounts",
+        ] {
+            assert!(
+                html.contains(required),
+                "missing onboarding copy for external testers: {required}"
             );
         }
     }

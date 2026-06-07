@@ -29,7 +29,59 @@ fn charts_file() -> PathBuf {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("charts.json"))
+        .unwrap_or_else(default_charts_file)
+}
+
+#[cfg(not(test))]
+fn default_charts_file() -> PathBuf {
+    PathBuf::from("charts.json")
+}
+
+#[cfg(test)]
+static DEFAULT_TEST_CHARTS_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn default_charts_file() -> PathBuf {
+    DEFAULT_TEST_CHARTS_FILE
+        .get_or_init(|| {
+            register_default_test_charts_file_cleanup();
+            std::env::temp_dir()
+                .join(format!(
+                    "opensnow-server-test-charts-{}",
+                    std::process::id()
+                ))
+                .join("charts.json")
+        })
+        .clone()
+}
+
+#[cfg(test)]
+fn cleanup_default_test_charts_file() {
+    if let Some(path) = DEFAULT_TEST_CHARTS_FILE.get() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+#[cfg(test)]
+fn register_default_test_charts_file_cleanup() {
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn atexit(cb: extern "C" fn()) -> i32;
+        }
+
+        extern "C" fn cleanup_at_exit() {
+            cleanup_default_test_charts_file();
+        }
+
+        unsafe {
+            let _ = atexit(cleanup_at_exit);
+        }
+    }
 }
 
 fn load() -> Vec<Value> {
@@ -122,4 +174,36 @@ async fn delete_chart(Path(id): Path<String>) -> Json<Value> {
     let removed = before - charts.len();
     let _ = store(&charts);
     Json(json!({ "status": "ok", "removed": removed }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_charts_file_is_outside_repository() {
+        unsafe {
+            std::env::remove_var("OPENSNOW_CHARTS_FILE");
+        }
+
+        assert_ne!(charts_file(), PathBuf::from("charts.json"));
+    }
+
+    #[test]
+    fn test_default_charts_file_cleanup_removes_test_artifacts() {
+        unsafe {
+            std::env::remove_var("OPENSNOW_CHARTS_FILE");
+        }
+
+        let path = charts_file();
+        store(&[json!({ "title": "Safe", "sql": "SELECT 1" })]).unwrap();
+        assert!(path.exists());
+
+        cleanup_default_test_charts_file();
+
+        assert!(!path.exists());
+        if let Some(parent) = path.parent() {
+            assert!(!parent.exists());
+        }
+    }
 }
