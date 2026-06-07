@@ -23,7 +23,9 @@ OpenSnow runs identically everywhere — the same binary and SQL surface, with H
 
 ## 0. Before you deploy
 
-For external users who only need to try OpenSnow quickly, start with `docs/PUBLIC_TEST_PATH.md` and run the CI-backed quickstart regression with `scripts/quickstart-smoke.sh --mode local`. Treat any internet-exposed deployment as production: enable authentication and TLS and supply secrets from a managed secret store (see below and `SECURITY.md`).
+Treat any internet-exposed deployment as production: enable authentication and TLS, supply secrets from a managed secret store (see below and `SECURITY.md`), and keep third-party analytics opt-in only. The embedded OSS/self-hosted UI does not ship with GA4 or external analytics tags enabled by default; add analytics only behind your own consent/configuration process and document the property owner for your deployment.
+
+For external users who only need to try OpenSnow quickly, start with `docs/PUBLIC_TEST_PATH.md` and run the CI-backed quickstart regression with `scripts/quickstart-smoke.sh --mode local`.
 
 OpenSnow command-line automation uses the `opensnow-cli` contract:
 

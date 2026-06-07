@@ -3,14 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<!-- Google Analytics (GA4) — same property as ebdsweden.com -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-2B82DV9GZJ"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-2B82DV9GZJ');
-</script>
+<!-- Third-party analytics are intentionally disabled by default for OSS/local/self-hosted builds. -->
 <title>OpenSnow — high-performance query engine for AI-era analytics</title>
 <meta name="description" content="Open-source analytics warehouse. Explore live EU finance dashboards over Eurostat & ECB data, build charts with no code, and let agents drive the platform via MCP. A demo by EBD Sweden." />
 <meta property="og:title" content="OpenSnow — high-performance query engine for AI-era analytics" />
@@ -664,7 +657,7 @@ async function loadPipeline(){
   if(run.running&&!plPoll) plPoll=setInterval(loadPipeline,2500);
   if(!run.running&&plPoll){ clearInterval(plPoll); plPoll=null; }
   renderGraph("pl-cols","pl-edges","pl-empty", data.nodes||[],
-    { emptyMsg:"No dbt artifacts yet. Run the pipeline to build the models." });
+    { emptyMsg:data.available?"No dbt nodes found in the configured artifacts.":"No dbt artifacts configured for this local run. Set OPENSNOW_DBT_PROJECT_DIR and OPENSNOW_DBT_ARTIFACTS_DIR, then follow docs/MCP_CONTROL_PLANE.md to enable pipeline nodes and dashboards." });
 }
 async function runPipeline(){ var btn=document.getElementById("pl-run"); btn.disabled=true; btn.textContent="● Running…";
   try{ await fetch("/api/v1/pipeline/run",{method:"POST"}); }catch(e){} setTimeout(loadPipeline,800); }

@@ -200,7 +200,19 @@ Known limitation: auth-disabled pgwire is a loopback/trusted-local compatibility
 
 Client compatibility matrix: the pgwire lane is simple-query only today. `psql -c` smoke is supported; Python `psycopg`/`psycopg2` default extended-query execution, COPY protocol, and general BI/dbt adapter pg_catalog introspection are documented unsupported and should return clear errors instead of hanging. Basic `information_schema.tables`, `information_schema.columns`, and REST `/api/v1/dbt/catalog` catalog-shape probes are covered by `scripts/public-smoke.sh` when pgwire is explicitly enabled.
 
-## 6. Smoke checks
+## 6. Pipeline and dashboard tab expectations
+
+The local quickstart server starts without bundled dbt artifacts by default. In that mode `GET /api/v1/pipeline` returns `available:false`, an artifacts path, no nodes, and no configured dashboards; the workspace UI shows a configuration note instead of implying that a missing pipeline can be run immediately. To enable the pipeline/lineage/dashboard demo locally, configure a dbt project and artifacts explicitly:
+
+```bash
+export OPENSNOW_DBT_PROJECT_DIR=$PWD/deploy/demo/dbt
+export OPENSNOW_DBT_ARTIFACTS_DIR=$PWD/deploy/demo/dbt/target
+# optional: export OPENSNOW_DASHBOARD_URL=https://your-bi.example/dashboard/...
+```
+
+See `docs/MCP_CONTROL_PLANE.md` for the dbt/MCP control-plane workflow and `deploy/demo/README.md` for the hosted portfolio demo wiring.
+
+## 7. Smoke checks
 
 `scripts/public-smoke.sh` is the public, repeatable smoke pack. It checks:
 

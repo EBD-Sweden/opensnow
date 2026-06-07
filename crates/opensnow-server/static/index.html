@@ -306,8 +306,14 @@ psql -h localhost -p 5433</pre>
       if (data.status !== 'ok') throw new Error(data.message || 'Demo load failed');
       sqlEl.value = data.sample_query;
       sampleEl.value = data.sample_query;
-      setText(statusBar, 'Demo data loaded: ' + data.rows_ingested + ' rows in ' + data.table + '. Run the sample query next.', 'ok');
-      showEmpty('Demo data loaded', data.next_step || 'Run the selected sample query.');
+      var rowCount = data.already_loaded ? (data.rows_checked || 0) : data.rows_ingested;
+      if (data.already_loaded) {
+        setText(statusBar, 'Demo data already loaded: ' + rowCount + ' rows in ' + data.table + '. Continue to queries.', 'ok');
+        showEmpty('Demo data already loaded', data.next_step || 'Continue to queries by running the selected sample query.');
+      } else {
+        setText(statusBar, 'Demo data loaded: ' + rowCount + ' rows in ' + data.table + '. Run the sample query next.', 'ok');
+        showEmpty('Demo data loaded', data.next_step || 'Run the selected sample query.');
+      }
     } catch (err) {
       showError('Load demo data failed: ' + err.message + '\n\nCheck docs/DEPLOYMENT.md and verify the server is healthy.');
       setText(statusBar, 'Demo load error', 'err');

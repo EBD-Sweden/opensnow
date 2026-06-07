@@ -40,6 +40,17 @@ const DEFAULT_QUERY_TIMEOUT_SECS: u64 = 30;
 const MAX_QUERY_TIMEOUT_SECS: u64 = 300;
 const SQL_COMPATIBILITY_DOC: &str = "docs/SQL_COMPATIBILITY.md";
 
+fn first_scalar_usize(batches: &[arrow::record_batch::RecordBatch]) -> Option<usize> {
+    let batch = batches.first()?;
+    if batch.num_rows() == 0 || batch.num_columns() == 0 {
+        return None;
+    }
+    arrow::util::display::array_value_to_string(batch.column(0), 0)
+        .ok()?
+        .parse()
+        .ok()
+}
+
 /// Create a router by spawning a new engine worker from the given `OpenSnowEngine`.
 pub fn create_router(engine: OpenSnowEngine) -> Router {
     let warehouse = engine.warehouse_path().to_string();
@@ -298,14 +309,27 @@ const LOAD_DEMO_SQL: &str = "CREATE TABLE opensnow_demo_orders AS SELECT * FROM 
 
 #[tracing::instrument(name = "rest.demo_load", skip(handle))]
 async fn load_demo_data(State(handle): State<AppState>) -> Json<Value> {
-    let _ = handle
-        .execute_sql(&format!("DROP TABLE IF EXISTS {DEMO_TABLE}"))
-        .await;
+    if let Ok(existing) = handle
+        .execute_sql(&format!("SELECT COUNT(*) AS rows FROM {DEMO_TABLE}"))
+        .await
+    {
+        let rows = first_scalar_usize(&existing).unwrap_or_default();
+        return Json(json!({
+            "status": "ok",
+            "table": DEMO_TABLE,
+            "already_loaded": true,
+            "rows_ingested": 0,
+            "rows_checked": rows,
+            "sample_query": DEMO_SAMPLE_QUERY,
+            "next_step": "Demo data is already loaded. Continue to queries by running the sample query from the browser picker or POST it to /api/v1/query.",
+        }));
+    }
 
     match handle.execute_sql(LOAD_DEMO_SQL).await {
         Ok(_) => Json(json!({
             "status": "ok",
             "table": DEMO_TABLE,
+            "already_loaded": false,
             "rows_ingested": 6,
             "sample_query": DEMO_SAMPLE_QUERY,
             "next_step": "Run the sample query from the browser picker or POST it to /api/v1/query.",
@@ -1310,6 +1334,35 @@ mod tenant_tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    #[test]
+    fn embedded_workspace_ui_does_not_load_third_party_analytics_by_default() {
+        assert!(
+            !APP_UI.contains("googletagmanager.com")
+                && !APP_UI.contains("gtag/js")
+                && !APP_UI.contains("G-2B82DV9GZJ"),
+            "self-hosted/local workspace UI must not emit GA4 or other third-party analytics by default"
+        );
+    }
+
+    #[test]
+    fn embedded_workspace_ui_explains_unconfigured_pipeline_in_local_default() {
+        assert!(
+            APP_UI.contains("OPENSNOW_DBT_PROJECT_DIR")
+                && APP_UI.contains("No dbt artifacts configured")
+                && APP_UI.contains("docs/MCP_CONTROL_PLANE.md"),
+            "default local pipeline UI should gate the dbt limitation with operator configuration guidance"
+        );
+    }
+
+    #[test]
+    fn public_test_ui_labels_idempotent_demo_load_as_already_loaded() {
+        assert!(
+            PUBLIC_TEST_UI.contains("Demo data already loaded")
+                && PUBLIC_TEST_UI.contains("Continue to queries"),
+            "public-test UI should not report an idempotent load as zero newly loaded rows"
+        );
+    }
+
     #[tokio::test]
     async fn serves_open_graph_image_without_auth() {
         let resp = make_router()
@@ -1587,6 +1640,64 @@ mod tenant_tests {
         let query_body = body_json(resp).await;
         assert_eq!(query_body["status"], "ok");
         assert!(query_body["rows"].as_i64().unwrap() >= 3);
+    }
+
+    #[tokio::test]
+    async fn demo_load_endpoint_is_idempotent_when_sample_table_already_exists() {
+        let router = make_router();
+
+        for attempt in 1..=2 {
+            let resp = router
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/demo/load")
+                        .header("content-type", "application/json")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = body_json(resp).await;
+            assert_eq!(
+                body["status"], "ok",
+                "demo load attempt {attempt} should succeed even after the table exists: {body}"
+            );
+            assert_eq!(body["table"], "opensnow_demo_orders");
+            if attempt == 1 {
+                assert_eq!(body["already_loaded"], false);
+                assert_eq!(body["rows_ingested"], 6);
+            } else {
+                assert_eq!(body["already_loaded"], true);
+                assert_eq!(body["rows_ingested"], 0);
+                assert_eq!(
+                    body["rows_checked"], 6,
+                    "rows_checked should report the sample table row count, not the COUNT(*) RecordBatch row count: {body}"
+                );
+            }
+            assert!(
+                body["sample_query"]
+                    .as_str()
+                    .unwrap()
+                    .contains("opensnow_demo_orders")
+            );
+        }
+
+        let resp = router
+            .oneshot(
+                Request::post("/api/v1/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"sql":"SELECT COUNT(*) AS rows FROM opensnow_demo_orders"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let query_body = body_json(resp).await;
+        assert_eq!(query_body["status"], "ok");
+        assert!(query_body["data"].as_str().unwrap().contains(r#""rows":6"#));
     }
 
     #[tokio::test]
