@@ -115,3 +115,6 @@ models:
   - name: mart_sek_vs_euro
     description: Sweden vs euro-area money-market & bond rates plus the SEK/EUR exchange rate.
     meta: { label: "SEK vs euro" }
+  - name: mart_portfolio_outcome
+    description: Implied real household-portfolio return (asset mix × asset-class returns) + compounded real wealth index, per country.
+    meta: { label: "Portfolio outcome (is fund-heavy better?)" }

@@ -432,7 +432,8 @@ var FRIENDLY = {                  // fallback labels if dbt descriptions are abs
   stg_gdp_growth:       { label: "GDP growth — cleaned", desc: "Real GDP growth YoY %." },
   stg_fx_sek:           { label: "SEK/EUR — cleaned", desc: "Krona per euro." },
   mart_asset_returns:   { label: "Investing scorecard — real returns", desc: "Real return of cash, bonds, housing + GDP, per country." },
-  mart_sek_vs_euro:     { label: "SEK vs euro", desc: "Sweden vs euro-area rates + SEK/EUR." }
+  mart_sek_vs_euro:     { label: "SEK vs euro", desc: "Sweden vs euro-area rates + SEK/EUR." },
+  mart_portfolio_outcome:{ label: "Portfolio outcome", desc: "Implied real return by allocation + wealth index." }
 };
 function meta(code) {
   var n = PIPELINE && (PIPELINE.nodes||[]).find(function(x){return x.name===code;});
@@ -679,6 +680,7 @@ var DASHBOARDS = [
   { name: "European Savings — Per Person",   url: "https://metabase.ebdsweden.com/public/dashboard/442c98aa-2040-481c-8813-8381af6ba48e" },
   { name: "European Credit & Cards — Per Person", url: "https://metabase.ebdsweden.com/public/dashboard/6a4f8e0a-c1e4-4359-a79a-e2b66e63439e" },
   { name: "Household Investing Scorecard (SEK vs euro)", url: "https://metabase.ebdsweden.com/public/dashboard/7bb98902-a782-45b1-a1ed-f97532fa86a7" },
+  { name: "Is Fund-Heavy Better? — Portfolio Outcome", url: "https://metabase.ebdsweden.com/public/dashboard/4f7ae374-4ec5-4a4b-8198-cc6a351502bb" },
   { name: "Housing & Growth (overview)", url: "https://metabase.ebdsweden.com/public/dashboard/b132a0da-e387-4d99-b25f-28155b8dec09" }
 ];
 async function loadDashboards(){
