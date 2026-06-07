@@ -16,6 +16,14 @@ sources:
         description: ECB MFI interest rates on new household consumer credit & mortgages (% p.a.).
         meta: { label: "ECB · Loan interest rates" }
 
+  - name: market_raw
+    schema: public
+    description: Stock-market index levels from the Financial Modeling Prep API.
+    tables:
+      - name: equity_index
+        description: National stock-market index, year-end level (DAX, OMXS30, CAC, …), per country.
+        meta: { label: "Stock-market indices (FMP)" }
+
   - name: eurostat_raw
     schema: public
     description: Raw Eurostat datasets loaded into OpenSnow as-is (SDMX codes preserved).

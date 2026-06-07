@@ -109,8 +109,11 @@ models:
   - name: stg_fx_sek
     description: SEK per EUR exchange rate, quarterly.
     meta: { label: "SEK/EUR — cleaned" }
+  - name: stg_equity_index
+    description: National stock-market index, year-end level (DAX, OMXS30, CAC, …), per country.
+    meta: { label: "Stock-market index — cleaned" }
   - name: mart_asset_returns
-    description: Real (inflation-adjusted) return of cash, bonds, housing + real GDP growth, per country.
+    description: Real (inflation-adjusted) return of cash, bonds, housing and equity (stock index), per country.
     meta: { label: "Investing scorecard — real returns" }
   - name: mart_sek_vs_euro
     description: Sweden vs euro-area money-market & bond rates plus the SEK/EUR exchange rate.
