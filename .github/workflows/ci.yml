@@ -199,10 +199,19 @@ jobs:
 
       - name: Security audit (blocking)
         # SOC 2 CC6.8/CC7.1: known-vulnerable dependencies must block merge.
-        # If a specific advisory is genuinely unfixable upstream, document it and
-        # add a scoped `--ignore RUSTSEC-XXXX-NNNN` here rather than reverting to
-        # warn-only for all advisories.
-        run: cargo audit --deny warnings
+        # Scoped ignores below are transitive advisories with no upstream fix yet
+        # (protobuf was removed by dropping prometheus' protobuf feature). Revisit
+        # and drop these as fixes land:
+        #   RUSTSEC-2023-0071  rsa            Marvin timing sidechannel — no fixed upgrade
+        #   RUSTSEC-2024-0384  instant        unmaintained (transitive)
+        #   RUSTSEC-2024-0436  paste          unmaintained (transitive)
+        #   RUSTSEC-2025-0134  rustls-pemfile unmaintained (transitive)
+        #   RUSTSEC-2026-0097  rand           unsound only with a custom logger (edge case)
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0384 \
+            --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 \
+            --ignore RUSTSEC-2026-0097
 
   secret-scan:
     name: Secret Scan (gitleaks)
@@ -215,10 +224,14 @@ jobs:
 
       - name: Run gitleaks
         # SOC 2 CC6.8/CC7.1 supply-chain: fail the build if a secret is detected
-        # in the working tree or git history.
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # in the working tree or git history. Uses the OSS gitleaks binary directly
+        # (the gitleaks-action requires a paid license for org repos); same scan,
+        # no license needed.
+        run: |
+          GL_VERSION=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --no-banner --exit-code 1
 
   helm-lint:
     name: Helm Lint

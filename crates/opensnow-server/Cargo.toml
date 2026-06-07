@@ -38,7 +38,10 @@ tokio-rustls = "0.26"
 rustls-pemfile = "2"
 async-trait = "0.1"
 futures = "0.3"
-prometheus = "0.13"
+# default-features=false drops the optional `protobuf` exposition format (we only
+# use TextEncoder for /metrics), removing the vulnerable protobuf 2.x crate
+# (RUSTSEC-2024-0437) entirely.
+prometheus = { version = "0.13", default-features = false }
 hmac = "0.12"
 sha2 = "0.10"
 opentelemetry.workspace = true
