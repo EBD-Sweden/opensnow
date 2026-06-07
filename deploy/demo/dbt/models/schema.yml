@@ -100,3 +100,18 @@ models:
   - name: mart_banking_per_capita
     description: Per-person savings, debt and card spend (ECB ÷ population) — household behavior.
     meta: { label: "Banking per capita" }
+  - name: stg_money_market
+    description: Short-term money-market (cash) rate per country.
+    meta: { label: "Money-market rate — cleaned" }
+  - name: stg_gdp_growth
+    description: Real GDP growth YoY % (seasonally adjusted).
+    meta: { label: "GDP growth — cleaned" }
+  - name: stg_fx_sek
+    description: SEK per EUR exchange rate, quarterly.
+    meta: { label: "SEK/EUR — cleaned" }
+  - name: mart_asset_returns
+    description: Real (inflation-adjusted) return of cash, bonds, housing + real GDP growth, per country.
+    meta: { label: "Investing scorecard — real returns" }
+  - name: mart_sek_vs_euro
+    description: Sweden vs euro-area money-market & bond rates plus the SEK/EUR exchange rate.
+    meta: { label: "SEK vs euro" }

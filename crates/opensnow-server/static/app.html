@@ -426,7 +426,13 @@ var FRIENDLY = {                  // fallback labels if dbt descriptions are abs
   stg_ecb_mir:          { label: "ECB rates — cleaned", desc: "Household loan rates." },
   mart_card_payments:   { label: "Card payments & ATM (ECB)", desc: "Credit vs debit cards + ATM, avg ticket." },
   mart_consumer_credit: { label: "Consumer credit & mortgages (ECB)", desc: "Household credit stocks, rates, spread." },
-  mart_banking_per_capita: { label: "Banking per capita", desc: "Savings, debt & card spend per person." }
+  mart_banking_per_capita: { label: "Banking per capita", desc: "Savings, debt & card spend per person." },
+  ert_sek_eur:          { label: "SEK / EUR exchange rate", desc: "Swedish krona per euro, quarterly." },
+  stg_money_market:     { label: "Money-market rate — cleaned", desc: "Short-term cash rate per country." },
+  stg_gdp_growth:       { label: "GDP growth — cleaned", desc: "Real GDP growth YoY %." },
+  stg_fx_sek:           { label: "SEK/EUR — cleaned", desc: "Krona per euro." },
+  mart_asset_returns:   { label: "Investing scorecard — real returns", desc: "Real return of cash, bonds, housing + GDP, per country." },
+  mart_sek_vs_euro:     { label: "SEK vs euro", desc: "Sweden vs euro-area rates + SEK/EUR." }
 };
 function meta(code) {
   var n = PIPELINE && (PIPELINE.nodes||[]).find(function(x){return x.name===code;});
@@ -672,6 +678,7 @@ var DASHBOARDS = [
   { name: "Card Payments & Consumer Credit (ECB)", url: "https://metabase.ebdsweden.com/public/dashboard/35875e70-4552-4d18-9cd2-2c4727c9a947" },
   { name: "European Savings — Per Person",   url: "https://metabase.ebdsweden.com/public/dashboard/442c98aa-2040-481c-8813-8381af6ba48e" },
   { name: "European Credit & Cards — Per Person", url: "https://metabase.ebdsweden.com/public/dashboard/6a4f8e0a-c1e4-4359-a79a-e2b66e63439e" },
+  { name: "Household Investing Scorecard (SEK vs euro)", url: "https://metabase.ebdsweden.com/public/dashboard/7bb98902-a782-45b1-a1ed-f97532fa86a7" },
   { name: "Housing & Growth (overview)", url: "https://metabase.ebdsweden.com/public/dashboard/b132a0da-e387-4d99-b25f-28155b8dec09" }
 ];
 async function loadDashboards(){

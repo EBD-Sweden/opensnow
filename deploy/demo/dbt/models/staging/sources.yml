@@ -66,3 +66,6 @@ sources:
       - name: ert_eff_ic_q
         description: Effective exchange rates (real & nominal, vs 42 partners), 2015=100.
         meta: { label: Effective exchange rates }
+      - name: ert_sek_eur
+        description: SEK per EUR exchange rate (quarterly average) for SEK-vs-euro comparison.
+        meta: { label: "SEK / EUR exchange rate" }

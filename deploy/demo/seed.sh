@@ -29,7 +29,8 @@ MARTS="mart_house_price_index mart_house_price_yoy mart_house_price_latest mart_
 mart_household_savings mart_household_banking mart_household_asset_mix \
 mart_inflation mart_cost_of_living mart_rates_vs_housing \
 mart_sovereign_risk mart_competitiveness \
-mart_card_payments mart_consumer_credit mart_banking_per_capita"
+mart_card_payments mart_consumer_credit mart_banking_per_capita \
+mart_asset_returns mart_sek_vs_euro"
 for mart in $MARTS; do
   echo "   -> eurostat.$mart"
   curl -fsS -X POST "$OPENSNOW_HTTP/api/v1/export/postgres" -H 'content-type: application/json' \
