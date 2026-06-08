@@ -74,7 +74,18 @@ pub async fn handle_command(
     }
 
     if upper.starts_with("DROP TABLE ") {
-        let table = trimmed.split_whitespace().nth(2).unwrap_or("");
+        // DROP TABLE [IF EXISTS] <name> — skip the optional IF EXISTS so the
+        // real table name is targeted (dbt emits `drop table if exists <name>`).
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        let name_idx = if tokens.len() >= 5
+            && tokens[2].eq_ignore_ascii_case("if")
+            && tokens[3].eq_ignore_ascii_case("exists")
+        {
+            4
+        } else {
+            2
+        };
+        let table = tokens.get(name_idx).copied().unwrap_or("");
         return handle_drop_table(engine, table).await.map(Some);
     }
 
@@ -178,6 +189,33 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
                     current.push(chars.next().unwrap());
                 } else {
                     quote = None;
+                }
+            }
+            continue;
+        }
+
+        // Line comment `-- … \n`: copy through verbatim so a `;` inside it is
+        // not treated as a statement separator (dbt models carry `;` in notes).
+        if ch == '-' && chars.peek() == Some(&'-') {
+            current.push(ch);
+            current.push(chars.next().unwrap());
+            while let Some(&c) = chars.peek() {
+                current.push(chars.next().unwrap());
+                if c == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
+        // Block comment `/* … */`: same — ignore separators inside.
+        if ch == '/' && chars.peek() == Some(&'*') {
+            current.push(ch);
+            current.push(chars.next().unwrap());
+            while let Some(c) = chars.next() {
+                current.push(c);
+                if c == '*' && chars.peek() == Some(&'/') {
+                    current.push(chars.next().unwrap());
+                    break;
                 }
             }
             continue;
@@ -742,6 +780,10 @@ async fn handle_ctas(engine: &OpenSnowEngine, sql: &str) -> Result<Vec<RecordBat
             crate::error::OpenSnowError::Internal(format!("CREATE TABLE {table_name}: {e:#}"))
         })?;
 
+    // Idempotent: replace any existing registration (e.g. a table re-registered
+    // from disk at startup, or a re-run) so CREATE TABLE AS does not fail with
+    // "table already exists". The Parquet file was just overwritten above.
+    let _ = ctx.deregister_table(table_name);
     ctx.register_parquet(table_name, &out_path, Default::default())
         .await?;
     info!(
@@ -1046,6 +1088,17 @@ mod tests {
         let engine =
             OpenSnowEngine::from_config_and_catalog(config, catalog_path.to_str().unwrap());
         (engine, dir)
+    }
+
+    #[test]
+    fn split_sql_statements_ignores_semicolons_inside_comments() {
+        use super::split_sql_statements as split;
+        // `;` inside a -- line comment must not split (dbt models carry these).
+        assert_eq!(split("-- a; b; c\nselect 1").len(), 1);
+        // `;` inside a /* */ block comment must not split.
+        assert_eq!(split("/* x; y; z */ select 1").len(), 1);
+        // a real trailing `;` still separates.
+        assert_eq!(split("select 1 -- note; here\n; select 2").len(), 2);
     }
 
     #[test]
