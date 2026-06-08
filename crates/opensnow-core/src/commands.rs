@@ -16,7 +16,7 @@ pub async fn handle_command(
     engine: &OpenSnowEngine,
     sql: &str,
 ) -> Result<Option<Vec<RecordBatch>>> {
-    let trimmed = sql.trim();
+    let trimmed = strip_leading_sql_comments(sql);
     let upper = trimmed.to_uppercase();
 
     // ── Virtual warehouse commands ─────────────────────────────────────────
@@ -79,6 +79,41 @@ pub async fn handle_command(
     }
 
     Ok(None)
+}
+
+/// Strip leading whitespace and SQL comments (`/* … */` blocks and `-- …` line
+/// comments) so command dispatch matches the leading keyword even when a client
+/// precedes the statement with comments. dbt prepends a `/* {...} */` metadata
+/// comment to every statement; without stripping it, `/* … */ CREATE TABLE …`
+/// would miss the CTAS handler and fall through to DataFusion's in-memory CTAS,
+/// which registers the table but writes no Parquet (so it vanishes on restart).
+fn strip_leading_sql_comments(sql: &str) -> &str {
+    let mut s = sql.trim_start();
+    loop {
+        if let Some(rest) = s.strip_prefix("/*") {
+            match rest.find("*/") {
+                Some(end) => {
+                    s = rest[end + 2..].trim_start();
+                    continue;
+                }
+                None => break, // unterminated block comment — leave as-is
+            }
+        }
+        if let Some(rest) = s.strip_prefix("--") {
+            match rest.find('\n') {
+                Some(nl) => {
+                    s = rest[nl + 1..].trim_start();
+                    continue;
+                }
+                None => {
+                    s = ""; // line comment runs to end of input
+                    break;
+                }
+            }
+        }
+        break;
+    }
+    s
 }
 
 fn is_safe_unqualified_identifier(name: &str) -> bool {
@@ -1000,6 +1035,38 @@ mod tests {
         let engine =
             OpenSnowEngine::from_config_and_catalog(config, catalog_path.to_str().unwrap());
         (engine, dir)
+    }
+
+    #[test]
+    fn strip_leading_sql_comments_unwraps_dbt_and_line_comments() {
+        use super::strip_leading_sql_comments as strip;
+        assert_eq!(
+            strip("/* {\"app\":\"dbt\"} */\ncreate table t as (select 1)"),
+            "create table t as (select 1)"
+        );
+        assert_eq!(strip("  -- hi\nSELECT 1"), "SELECT 1");
+        assert_eq!(strip("/* a */ /* b */ SELECT 1"), "SELECT 1");
+        assert_eq!(strip("SELECT 1"), "SELECT 1");
+    }
+
+    // Regression: a CREATE TABLE AS preceded by a leading comment (as dbt emits)
+    // must still route to the persisting CTAS handler and write Parquet to the
+    // warehouse — otherwise it falls through to an in-memory table that is lost
+    // on restart.
+    #[tokio::test]
+    async fn ctas_behind_leading_comment_persists_parquet() {
+        let (engine, _dir) = isolated_engine();
+        let sql = "/* {\"app\": \"dbt\", \"dbt_version\": \"1.11.11\"} */\n\
+                   create table dbt_mart as (\n  select 1 as a, 2 as b\n)";
+        super::handle_command(&engine, sql).await.unwrap();
+        let path = format!(
+            "{}/opensnow/public/dbt_mart.parquet",
+            engine.warehouse_path()
+        );
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "CTAS behind a leading comment must persist Parquet at {path}"
+        );
     }
 
     #[tokio::test]
