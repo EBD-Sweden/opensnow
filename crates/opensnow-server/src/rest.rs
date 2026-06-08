@@ -1501,6 +1501,84 @@ mod tenant_tests {
         assert_eq!(authenticated_admin.status(), StatusCode::OK);
     }
 
+    // Regression: the REST query API must enforce the same role-based object
+    // policy the pgwire surface checks, so a non-admin cannot read a table its
+    // role was not granted. Deny-by-default; platform admins bypass; an explicit
+    // grant re-enables access.
+    #[tokio::test]
+    async fn auth_enabled_rest_query_enforces_object_policy() {
+        use opensnow_auth::Privilege;
+
+        let auth = test_auth_state();
+        // Grant ANALYST SELECT on shared_t only — secret_t stays ungranted.
+        auth.policy
+            .grant_table_privilege("ANALYST", Privilege::Select, "shared_t")
+            .unwrap();
+        let app = create_router_with_auth(EngineHandle::spawn(make_engine()), Some(auth.clone()));
+
+        let admin = bearer(
+            &auth,
+            "admin-client",
+            "SYSADMIN",
+            vec!["sql.query", "table.select", "policy.admin"],
+        );
+        let analyst = bearer(
+            &auth,
+            "analyst-client",
+            "ANALYST",
+            vec!["sql.query", "table.select"],
+        );
+
+        async fn query(app: &Router, token: &str, sql: &str) -> Value {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::post("/api/v1/query")
+                        .header("content-type", "application/json")
+                        .header("authorization", token)
+                        .body(Body::from(json!({ "sql": sql }).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            body_json(resp).await
+        }
+
+        // Admin (platform admin) seeds a granted table and an ungranted one.
+        assert_eq!(
+            query(&app, &admin, "CREATE TABLE shared_t AS SELECT 1 AS n").await["status"],
+            "ok"
+        );
+        assert_eq!(
+            query(&app, &admin, "CREATE TABLE secret_t AS SELECT 'PRIVATE' AS s").await["status"],
+            "ok"
+        );
+
+        // Non-admin WITHOUT a grant -> denied (the fix).
+        let denied = query(&app, &analyst, "SELECT * FROM secret_t").await;
+        assert_eq!(denied["status"], "error", "ungranted read must be denied: {denied:?}");
+        assert!(
+            denied["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("object policy denied"),
+            "expected object-policy denial, got {denied:?}"
+        );
+
+        // Non-admin WITH a grant -> allowed (proves it's a real grant gate).
+        let allowed = query(&app, &analyst, "SELECT * FROM shared_t").await;
+        assert_eq!(
+            allowed["status"], "ok",
+            "granted role must read granted table: {allowed:?}"
+        );
+
+        // Platform admin bypasses the object policy entirely.
+        assert_eq!(
+            query(&app, &admin, "SELECT * FROM secret_t").await["status"],
+            "ok"
+        );
+    }
+
     #[tokio::test]
     async fn auth_enabled_sso_login_stays_public() {
         let auth = test_auth_state();
