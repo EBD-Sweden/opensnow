@@ -256,7 +256,10 @@ async fn add_security_headers(mut resp: Response) -> Response {
     set("x-content-type-options", "nosniff");
     set("x-frame-options", "DENY");
     set("referrer-policy", "no-referrer");
-    set("permissions-policy", "geolocation=(), microphone=(), camera=()");
+    set(
+        "permissions-policy",
+        "geolocation=(), microphone=(), camera=()",
+    );
     set("cross-origin-opener-policy", "same-origin");
     set(
         "content-security-policy",
@@ -1550,13 +1553,21 @@ mod tenant_tests {
             "ok"
         );
         assert_eq!(
-            query(&app, &admin, "CREATE TABLE secret_t AS SELECT 'PRIVATE' AS s").await["status"],
+            query(
+                &app,
+                &admin,
+                "CREATE TABLE secret_t AS SELECT 'PRIVATE' AS s"
+            )
+            .await["status"],
             "ok"
         );
 
         // Non-admin WITHOUT a grant -> denied (the fix).
         let denied = query(&app, &analyst, "SELECT * FROM secret_t").await;
-        assert_eq!(denied["status"], "error", "ungranted read must be denied: {denied:?}");
+        assert_eq!(
+            denied["status"], "error",
+            "ungranted read must be denied: {denied:?}"
+        );
         assert!(
             denied["message"]
                 .as_str()
