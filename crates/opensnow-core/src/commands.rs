@@ -308,7 +308,18 @@ fn validate_materialization_query(query_sql: &str, command: &str) -> Result<Stri
     }
 
     let statement = statements.into_iter().next().unwrap();
-    match first_keyword(&statement).as_str() {
+    // Recognize the leading keyword even when the body is wrapped in a single
+    // outer `(` and/or preceded by comments — dbt emits `( -- note\n select … )`.
+    // Skip one leading paren, then strip leading comments, before the keyword
+    // check. The original statement is returned unchanged and executed as-is;
+    // DataFusion tolerates the wrapping parens and comments at runtime.
+    let head = strip_leading_sql_comments(
+        statement
+            .trim_start()
+            .strip_prefix('(')
+            .unwrap_or(statement.trim_start()),
+    );
+    match first_keyword(head).as_str() {
         "SELECT" | "WITH" => Ok(statement),
         keyword => Err(crate::error::OpenSnowError::Internal(format!(
             "Invalid {command} materialization query: expected SELECT or WITH, got {keyword}"
@@ -1056,8 +1067,10 @@ mod tests {
     #[tokio::test]
     async fn ctas_behind_leading_comment_persists_parquet() {
         let (engine, _dir) = isolated_engine();
+        // Exact dbt shape: a leading /* … */ metadata comment, the body wrapped
+        // in `( … )`, and an inner -- comment before the SELECT.
         let sql = "/* {\"app\": \"dbt\", \"dbt_version\": \"1.11.11\"} */\n\
-                   create table dbt_mart as (\n  select 1 as a, 2 as b\n)";
+                   create table dbt_mart as (\n  -- model description\n  select 1 as a, 2 as b\n)";
         super::handle_command(&engine, sql).await.unwrap();
         let path = format!(
             "{}/opensnow/public/dbt_mart.parquet",
