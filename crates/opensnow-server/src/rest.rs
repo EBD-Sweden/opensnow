@@ -239,6 +239,32 @@ pub fn create_router_with_auth_and_buffer(
         // Tenant resolution runs for every request — public and protected.
         // Handlers that care about tenancy extract `TenantId` from the request.
         .layer(axum::middleware::from_fn(tenant_middleware))
+        // Defense-in-depth security headers on every response.
+        .layer(axum::middleware::map_response(add_security_headers))
+}
+
+/// Attach standard security headers to every response (closes the OWASP ZAP
+/// baseline header findings). CSP allows inline scripts/styles + `unsafe-eval`
+/// because the single-page console embeds inline scripts and the self-hosted
+/// Vega-Lite bundle uses `Function`/eval; tightening to nonces is a follow-up.
+async fn add_security_headers(mut resp: Response) -> Response {
+    use axum::http::{HeaderName, HeaderValue};
+    let h = resp.headers_mut();
+    let mut set = |k: &'static str, v: &'static str| {
+        h.insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+    };
+    set("x-content-type-options", "nosniff");
+    set("x-frame-options", "DENY");
+    set("referrer-policy", "no-referrer");
+    set("permissions-policy", "geolocation=(), microphone=(), camera=()");
+    set("cross-origin-opener-policy", "same-origin");
+    set(
+        "content-security-policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
+         style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+         connect-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+    );
+    resp
 }
 
 async fn query_ui() -> Html<String> {
@@ -990,6 +1016,8 @@ async fn ingest(State(handle): State<AppState>, Json(req): Json<IngestRequest>) 
 async fn execute_query(
     State(handle): State<AppState>,
     tenant: TenantId,
+    auth: Option<axum::Extension<crate::auth::AuthContext>>,
+    policy: Option<axum::Extension<crate::policy::ObjectPolicyStore>>,
     Json(req): Json<QueryRequest>,
 ) -> Json<Value> {
     let warehouse = req.warehouse.as_deref().unwrap_or("default");
@@ -998,6 +1026,20 @@ async fn execute_query(
         Ok(sql) => sql,
         Err(message) => return Json(json!({ "status": "error", "message": message })),
     };
+
+    // Object-level authorization (RBAC). When auth is enabled, `jwt_required`
+    // attaches the caller's AuthContext and the object-policy store as request
+    // extensions; enforce the SAME role-based table grants the pgwire surface
+    // checks (`authorize_pgwire_sql`) so a REST query cannot bypass per-role
+    // table restrictions. No-op in auth-disabled local/demo mode (extensions
+    // absent). Deny-by-default for non-admin roles — like pgwire and Snowflake,
+    // roles need explicit grants; platform admins bypass.
+    if let (Some(axum::Extension(auth)), Some(axum::Extension(policy))) = (auth, policy)
+        && let crate::policy::PolicyDecision::Deny(denial) = policy.check_sql(&auth, &sql)
+    {
+        record_query(start.elapsed(), "error", 0);
+        return Json(json!({ "status": "error", "message": denial.message() }));
+    }
 
     inc_active_queries();
     inc_warehouse_pending(warehouse);
