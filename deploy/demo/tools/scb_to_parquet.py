@@ -19,19 +19,24 @@ from pathlib import Path
 
 import pandas as pd
 
-BASE = "https://api.scb.se/OV0104/v1/doris/en/ssd/FM/FM5001/"
+BASE = "https://api.scb.se/OV0104/v1/doris/en/ssd/"
 CELL_LIMIT = 90000  # SCB caps response cells per call; chunk time to stay under it.
 
-# table path (under FM5001) -> output name. We pull ALL values of every dimension
-# (full history, every loan/collateral/purpose type) — "grab everything" first.
+# full table path (under .../ssd/) -> output name. We pull ALL values of every
+# dimension (full history, every loan/collateral/purpose/expenditure type).
 TABLES = {
-    "FM5001A/FM5001Sakerhet": "scb_household_loans_by_collateral",
-    "FM5001C/RantaT03N": "scb_lending_rates_by_purpose",
-    "FM5001C/RantaT04N": "scb_housing_loan_rates_by_fixation",
-    "FM5001C/RantaT01N": "scb_lending_rates_by_fixation",
-    "FM5001C/RantaT05": "scb_deposit_rates",
-    "FM5001A/FM5001penningmangd": "scb_money_supply",
-    "FM5001A/FM5001SDDSMFI": "scb_mfi_balance_sheet",
+    # Financial Market Statistics — credit, rates, money
+    "FM/FM5001/FM5001A/FM5001Sakerhet": "scb_household_loans_by_collateral",
+    "FM/FM5001/FM5001C/RantaT03N": "scb_lending_rates_by_purpose",
+    "FM/FM5001/FM5001C/RantaT04N": "scb_housing_loan_rates_by_fixation",
+    "FM/FM5001/FM5001C/RantaT01N": "scb_lending_rates_by_fixation",
+    "FM/FM5001/FM5001C/RantaT05": "scb_deposit_rates",
+    "FM/FM5001/FM5001A/FM5001penningmangd": "scb_money_supply",
+    "FM/FM5001/FM5001A/FM5001SDDSMFI": "scb_mfi_balance_sheet",
+    # Household budget survey — WHAT households spend on (COICOP categories) + income
+    "HE/HE0201/HE0201D/HUThush": "scb_household_expenditure_by_type",
+    "HE/HE0201/HE0201D/HUTupplat": "scb_household_expenditure_by_tenure",
+    "HE/HE0201/HE0201A/HUTutgift5": "scb_household_expenditure_by_income_decile",
 }
 
 
@@ -106,11 +111,13 @@ def fetch_table(path, name, out_dir):
         print(f"    {name}: chunk {ci + 1}/{len(chunks)} ({len(rows)} rows)")
 
     df = pd.DataFrame(rows)
-    # parse period (YYYYMmm or YYYYKq) -> year, month, geo
-    df["year"] = df["period"].str[:4].astype(int)
-    sep = df["period"].str[4:5]
-    num = df["period"].str[5:].astype(int)
-    df["month"] = num.where(sep == "M", num * 3)  # quarters -> end-month proxy
+    # parse period -> year, month. Handles monthly (YYYYMmm), quarterly (YYYYKq)
+    # and annual (YYYY, e.g. budget-survey years); month is NaN for annual.
+    per = df["period"].astype(str)
+    df["year"] = per.str[:4].astype(int)
+    sep = per.str[4:5]
+    num = pd.to_numeric(per.str[5:], errors="coerce")
+    df["month"] = num.where(sep == "M").fillna((num * 3).where(sep == "K"))
     df.insert(0, "geo", "SE")
     df["dataset"] = name
     df.to_parquet(out_dir / f"{name}.parquet", index=False)
@@ -122,7 +129,11 @@ def fetch_table(path, name, out_dir):
 
 def main(argv):
     out_dir = Path(argv[0]) if argv else Path(".")
+    # Optional name filters: only fetch tables whose output name contains an arg.
+    filters = argv[1:]
     for path, name in TABLES.items():
+        if filters and not any(f in name for f in filters):
+            continue
         try:
             fetch_table(path, name, out_dir)
         except Exception as e:
