@@ -243,6 +243,35 @@ pub fn create_router_with_auth_and_buffer(
         .layer(axum::middleware::map_response(add_security_headers))
 }
 
+/// Origin (`scheme://host[:port]`) of a URL string, or None if unparseable.
+fn url_origin(u: &str) -> Option<String> {
+    let (scheme, rest) = u.split_once("://")?;
+    let host = rest.split('/').next()?;
+    if scheme.is_empty() || host.is_empty() {
+        return None;
+    }
+    Some(format!("{scheme}://{host}"))
+}
+
+/// Content-Security-Policy, computed once. `frame-src` allows the configured
+/// dashboard origin (`OPENSNOW_DASHBOARD_URL`, e.g. the embedded Metabase) so
+/// the Dashboards tab can iframe it; without this `frame-src` falls back to
+/// `default-src 'self'` and blocks the cross-origin dashboard iframes.
+static CONTENT_SECURITY_POLICY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let frame_src = match std::env::var("OPENSNOW_DASHBOARD_URL")
+        .ok()
+        .and_then(|u| url_origin(&u))
+    {
+        Some(origin) => format!("'self' {origin}"),
+        None => "'self'".to_string(),
+    };
+    format!(
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
+         style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; \
+         frame-src {frame_src}; frame-ancestors 'none'; base-uri 'self'"
+    )
+});
+
 /// Attach standard security headers to every response (closes the OWASP ZAP
 /// baseline header findings). CSP allows inline scripts/styles + `unsafe-eval`
 /// because the single-page console embeds inline scripts and the self-hosted
@@ -250,8 +279,10 @@ pub fn create_router_with_auth_and_buffer(
 async fn add_security_headers(mut resp: Response) -> Response {
     use axum::http::{HeaderName, HeaderValue};
     let h = resp.headers_mut();
-    let mut set = |k: &'static str, v: &'static str| {
-        h.insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+    let mut set = |k: &'static str, v: &str| {
+        if let Ok(val) = HeaderValue::from_str(v) {
+            h.insert(HeaderName::from_static(k), val);
+        }
     };
     set("x-content-type-options", "nosniff");
     set("x-frame-options", "DENY");
@@ -261,12 +292,7 @@ async fn add_security_headers(mut resp: Response) -> Response {
         "geolocation=(), microphone=(), camera=()",
     );
     set("cross-origin-opener-policy", "same-origin");
-    set(
-        "content-security-policy",
-        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
-         style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
-         connect-src 'self'; frame-ancestors 'none'; base-uri 'self'",
-    );
+    set("content-security-policy", &CONTENT_SECURITY_POLICY);
     resp
 }
 
