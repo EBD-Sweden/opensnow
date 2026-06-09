@@ -1,8 +1,11 @@
 name: CI
 
+# Pre-public: CI is run locally, so it does NOT auto-run on every push (that
+# burns org Actions minutes on a private repo). It runs only on pull requests
+# to main, or manually via the Actions tab. Re-add the `push:` trigger before
+# going public (Actions is free on public repos).
 on:
-  push:
-    branches: [main, master]
+  workflow_dispatch:
   pull_request:
     branches: [main, master]
 
@@ -51,7 +54,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS runners bill at 10x minutes; keep CI to ubuntu pre-public.
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
