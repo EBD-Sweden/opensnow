@@ -20,7 +20,8 @@ permissions:
 jobs:
   validate:
     name: Validate (${{ matrix.provider }})
-    runs-on: ubuntu-latest
+    runs-on: ebd-ci
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
