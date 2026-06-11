@@ -257,5 +257,9 @@ jobs:
       - name: Lint Helm chart
         run: helm lint deploy/helm/opensnow/
 
+      - name: Fetch chart dependencies
+        # Chart.yaml pulls in bitnami/redis; template fails without it.
+        run: helm dependency build deploy/helm/opensnow/
+
       - name: Template Helm chart (dry-run validation)
         run: helm template opensnow deploy/helm/opensnow/ --debug
