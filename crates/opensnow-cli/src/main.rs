@@ -1173,7 +1173,11 @@ path = "~/.opensnow/catalog.db"
                     continue;
                 }
                 let resp = match serde_json::from_str::<opensnow_agent::mcp::McpRequest>(&line) {
-                    Ok(req) => serde_json::to_string(&server.handle_request(req).await)?,
+                    Ok(req) => match server.handle_request(req).await {
+                        Some(resp) => serde_json::to_string(&resp)?,
+                        // JSON-RPC notifications get no response.
+                        None => continue,
+                    },
                     Err(e) => format!(
                         "{{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{{\"code\":-32700,\"message\":\"parse error: {e}\"}}}}"
                     ),
@@ -1188,9 +1192,15 @@ path = "~/.opensnow/catalog.db"
             let engine = create_engine(&config)?;
             let params: serde_json::Value = serde_json::from_str(&args)
                 .map_err(|e| anyhow::anyhow!("invalid JSON args: {e}"))?;
-            let runtime = opensnow_agent::build_runtime();
-            let mut ctx = opensnow_agent::harness::AgentContext::new(engine, "default", None);
-            match runtime.invoke_tool(&tool, &mut ctx, params).await {
+            // Multi-step agent tasks run via run_task; single tools via invoke_tool.
+            let result = if tool == "analytics_schema_refactor" {
+                opensnow_agent::run_task(&tool, engine, params).await
+            } else {
+                let runtime = opensnow_agent::build_runtime();
+                let mut ctx = opensnow_agent::harness::AgentContext::new(engine, "default", None);
+                runtime.invoke_tool(&tool, &mut ctx, params).await
+            };
+            match result {
                 Ok(result) => println!("{}", serde_json::to_string_pretty(&result)?),
                 Err(e) => {
                     eprintln!("error: {e}");

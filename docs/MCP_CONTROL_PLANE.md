@@ -1,15 +1,24 @@
 # OpenSnow control plane — CLI & MCP
 
-OpenSnow exposes a single tool registry two ways, so both humans and LLMs can
+OpenSnow exposes a single tool registry three ways, so both humans and LLMs can
 *manage* the platform (not just query it): create/edit the dbt models that
-define pipelines, run the pipeline, and change the schedule.
+define pipelines, run the pipeline, change the schedule, and build dashboards.
 
-- **MCP server** (`opensnow mcp`) — JSON-RPC 2.0 over stdio. Point an MCP client
-  (Claude Code, Claude Desktop) at it and Claude can iterate pipelines for you.
+- **MCP server, stdio** (`opensnow mcp`) — JSON-RPC 2.0 over stdio. Point an MCP
+  client (Claude Code, Claude Desktop) at it and Claude can iterate pipelines
+  for you.
+- **MCP server, remote HTTP** (`POST /mcp` on the `opensnow-mcp` HTTP server,
+  port 8090) — the same JSON-RPC handler over streamable HTTP, behind the
+  server's bearer-token / JWT auth. This is the endpoint remote clients
+  (ChatGPT connectors/apps, Claude remote MCP) connect to.
 - **CLI** (`opensnow agent <tool> '<json>'`) — invoke any tool directly from a
   shell or script.
 
-Both read the dbt project at `OPENSNOW_DBT_PROJECT_DIR`.
+All read the dbt project at `OPENSNOW_DBT_PROJECT_DIR`. Every tool carries MCP
+annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
+`openWorldHint`, `title`) so clients can distinguish retrieval from
+write/delete actions — a requirement for ChatGPT app submission (see
+`CHATGPT_APP_ALIGNMENT.md`).
 
 ## Tools
 
@@ -24,8 +33,10 @@ Both read the dbt project at `OPENSNOW_DBT_PROJECT_DIR`.
 | `schedule_get` / `schedule_set` `{cron?\|interval_secs?}` | Read/update the schedule |
 | `dashboard_list` | List Metabase dashboards + public URLs |
 | `dashboard_create` `{name, cards:[{title, sql, display, dimensions, metrics}]}` | Build & publish a Metabase dashboard, returns public URL |
-| `query`, `list_tables`, `describe_table`, `create_table` | Data access |
-| `schema_introspect`, `query_history`, `migration_planner`, `refactor_test` | Schema-refactor agent tools |
+| `chart_list` / `chart_create` | List/create native Vega-Lite charts (OpenSnow Build board) |
+| `query`, `list_tables`, `describe_table`, `create_table`, `suggest_schema` | Data access & schema design |
+| `schema_introspect`, `query_history`, `migration_planner`, `refactor_test` | Schema-refactor agent tools (read-only) |
+| `analytics_schema_refactor` `{tables?}` | Run the **full schema-refactor agent** in one call: introspect → rank hot tables from query history → propose CTAS migration plans → smoke-test. Read-only report; pair with `schedule_set` or an external scheduler to run it periodically |
 
 The dashboard tools need Metabase credentials in the environment:
 `METABASE_URL` (default `https://metabase.ebdsweden.com`), `MB_USER`, `MB_PASSWORD`.
@@ -53,6 +64,35 @@ The dashboard tools need Metabase credentials in the environment:
 Then ask Claude things like *"add a staging model for interest rates and a mart
 joining it to house prices, then run the pipeline"* — it will call
 `dbt_write_model` + `pipeline_run` and report status.
+
+## Connect a remote LLM (ChatGPT, claude.ai) over HTTP
+
+Run the HTTP server and point the client at `/mcp`:
+
+```bash
+# Bearer-token auth (single shared token):
+MCP_AUTH_TOKEN=<secret> ./opensnow-mcp        # listens on :8090
+
+# Or JWT auth:
+MCP_JWT_SECRET=<secret> ./opensnow-mcp
+```
+
+```bash
+curl -s -X POST https://your-host:8090/mcp \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+In ChatGPT: *Settings → Connectors → Add custom connector* (developer mode)
+with the `/mcp` URL. JSON-RPC notifications receive `202 Accepted` with no
+body; SSE streaming is not yet implemented (`GET /mcp` returns 405, which the
+streamable-HTTP spec permits).
+
+> **Scope note:** `/mcp` is authenticated but not yet object-policy scoped —
+> any valid token can call any tool, including write tools. Use a dedicated
+> token and treat it as admin-level. Fine-grained per-tool RBAC is on the
+> ChatGPT-app gap list (`CHATGPT_APP_ALIGNMENT.md`).
 
 ## Use from the shell (CLI)
 

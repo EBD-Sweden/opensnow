@@ -75,6 +75,7 @@ pub fn router(handle: EngineHandle) -> Router {
 /// Build the MCP HTTP router with a fixed auth snapshot.
 pub fn router_with_auth(handle: EngineHandle, auth_config: auth::AuthConfig) -> Router {
     Router::new()
+        .route("/mcp", post(mcp_jsonrpc))
         .route("/schema/tables", get(list_tables))
         .route("/schema/tables/{table}", get(table_detail))
         .route("/query", post(run_query))
@@ -425,6 +426,68 @@ async fn run_query(
     }
 }
 
+// ── MCP over streamable HTTP ────────────────────────────────────────────────
+//
+// Remote MCP clients (ChatGPT apps/connectors, Claude remote MCP, etc.) speak
+// JSON-RPC over HTTP rather than stdio. This endpoint reuses the same
+// `McpServer` as `opensnow mcp`, running it on a dedicated thread because
+// `OpenSnowEngine` is !Send (same pattern as `EngineHandle`). Auth is enforced
+// by the router's `require_auth` layer (bearer token / JWT).
+
+type McpJob = (
+    opensnow_agent::mcp::McpRequest,
+    tokio::sync::oneshot::Sender<Option<opensnow_agent::mcp::McpResponse>>,
+);
+
+static MCP_JSONRPC_TX: std::sync::OnceLock<std::sync::mpsc::Sender<McpJob>> =
+    std::sync::OnceLock::new();
+
+fn mcp_jsonrpc_sender() -> std::sync::mpsc::Sender<McpJob> {
+    MCP_JSONRPC_TX
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel::<McpJob>();
+            std::thread::Builder::new()
+                .name("opensnow-mcp-jsonrpc".into())
+                .spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("failed to build MCP JSON-RPC runtime");
+                    rt.block_on(async move {
+                        let engine = OpenSnowEngine::with_config(EngineConfig::default());
+                        // The Arc never leaves this thread; McpServer's API takes Arc.
+                        #[allow(clippy::arc_with_non_send_sync)]
+                        let server =
+                            opensnow_agent::mcp::McpServer::new(std::sync::Arc::new(engine));
+                        while let Ok((req, reply)) = rx.recv() {
+                            let resp = server.handle_request(req).await;
+                            let _ = reply.send(resp);
+                        }
+                    });
+                })
+                .expect("failed to spawn MCP JSON-RPC thread");
+            tx
+        })
+        .clone()
+}
+
+async fn mcp_jsonrpc(
+    Json(req): Json<opensnow_agent::mcp::McpRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if mcp_jsonrpc_sender().send((req, tx)).is_err() {
+        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    match rx.await {
+        Ok(Some(resp)) => Json(resp).into_response(),
+        // Notification: no response body, per the streamable-HTTP transport.
+        Ok(None) => axum::http::StatusCode::ACCEPTED.into_response(),
+        Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 struct AgentTaskRequest {
     #[serde(default)]
@@ -596,6 +659,50 @@ mod tests {
         ServiceExt::<Request<Body>>::oneshot(app, req)
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_tools_list_returns_annotated_tools() {
+        let resp = do_post(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        let tools = json["result"]["tools"].as_array().unwrap();
+        assert!(!tools.is_empty());
+        assert!(tools.iter().all(|t| t.get("annotations").is_some()));
+        assert!(
+            tools
+                .iter()
+                .any(|t| t["name"] == "analytics_schema_refactor")
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_notification_returns_202() {
+        let resp = do_post(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_requires_auth_when_jwt_enabled() {
+        let app = test_app_with_jwt("mcp-jwt-secret");
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#))
+            .unwrap();
+        let resp = ServiceExt::<Request<Body>>::oneshot(app, req)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

@@ -48,11 +48,20 @@ impl McpServer {
     }
 
     /// Handle a single MCP JSON-RPC request.
-    pub async fn handle_request(&self, request: McpRequest) -> McpResponse {
+    ///
+    /// Returns `None` for JSON-RPC notifications (e.g. `notifications/initialized`),
+    /// which must not receive a response per the spec.
+    pub async fn handle_request(&self, request: McpRequest) -> Option<McpResponse> {
+        // Notifications carry no id and expect no response.
+        if request.method.starts_with("notifications/") {
+            return None;
+        }
+
         let id = request.id.clone();
 
         let result = match request.method.as_str() {
             "initialize" => self.handle_initialize().await,
+            "ping" => Ok(json!({})),
             "tools/list" => self.handle_tools_list().await,
             "tools/call" => self.handle_tool_call(request.params).await,
             "resources/list" => self.handle_resources_list().await,
@@ -63,7 +72,7 @@ impl McpServer {
             }),
         };
 
-        match result {
+        Some(match result {
             Ok(value) => McpResponse {
                 jsonrpc: "2.0".into(),
                 id,
@@ -76,7 +85,7 @@ impl McpServer {
                 result: None,
                 error: Some(error),
             },
-        }
+        })
     }
 
     async fn handle_initialize(&self) -> Result<Value, McpError> {
@@ -99,14 +108,15 @@ impl McpServer {
             "tools": [
                 {
                     "name": "query",
-                    "description": "Execute a SQL query against the OpenSnow warehouse. Returns results as a formatted table. Supports full ANSI SQL including JOINs, aggregations, window functions, CTEs, and UNION.",
+                    "description": "Execute a SQL query against the OpenSnow warehouse. Returns results as a formatted table. Supports full ANSI SQL including JOINs, aggregations, window functions, CTEs, and UNION. Accepts DDL/DML, so treat as a write-capable tool.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "sql": { "type": "string", "description": "SQL query to execute" }
                         },
                         "required": ["sql"]
-                    }
+                    },
+                    "annotations": annotate("Run SQL", false, true, false, false)
                 },
                 {
                     "name": "list_tables",
@@ -114,7 +124,8 @@ impl McpServer {
                     "inputSchema": {
                         "type": "object",
                         "properties": {}
-                    }
+                    },
+                    "annotations": annotate("List tables", true, false, true, false)
                 },
                 {
                     "name": "describe_table",
@@ -125,7 +136,8 @@ impl McpServer {
                             "table_name": { "type": "string", "description": "Table name to describe" }
                         },
                         "required": ["table_name"]
-                    }
+                    },
+                    "annotations": annotate("Describe table", true, false, true, false)
                 },
                 {
                     "name": "create_table",
@@ -137,11 +149,12 @@ impl McpServer {
                             "select_sql": { "type": "string", "description": "SELECT query whose results become the table" }
                         },
                         "required": ["table_name", "select_sql"]
-                    }
+                    },
+                    "annotations": annotate("Create table", false, false, false, false)
                 },
                 {
                     "name": "suggest_schema",
-                    "description": "Suggest a table schema based on a natural language description of the data. Returns column definitions, partitioning strategy, and CREATE TABLE SQL.",
+                    "description": "Suggest a table schema based on a natural language description of the data. Returns column definitions, partitioning strategy, and CREATE TABLE SQL. Does not execute anything.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -149,7 +162,8 @@ impl McpServer {
                             "industry": { "type": "string", "enum": ["telecom", "banking", "general"], "description": "Industry context" }
                         },
                         "required": ["description"]
-                    }
+                    },
+                    "annotations": annotate("Suggest schema", true, false, true, false)
                 },
                 {
                     "name": "schema_introspect",
@@ -159,7 +173,8 @@ impl McpServer {
                         "properties": {
                             "table_name": { "type": "string", "description": "Optional table name filter" }
                         }
-                    }
+                    },
+                    "annotations": annotate("Introspect schema", true, false, true, false)
                 },
                 {
                     "name": "query_history",
@@ -169,7 +184,8 @@ impl McpServer {
                         "properties": {
                             "limit": { "type": "integer", "description": "Max queries to return (default 100)" }
                         }
-                    }
+                    },
+                    "annotations": annotate("Query history", true, false, true, false)
                 },
                 {
                     "name": "migration_planner",
@@ -180,23 +196,37 @@ impl McpServer {
                             "target_table": { "type": "string", "description": "Source table to build a mart from" }
                         },
                         "required": ["target_table"]
-                    }
+                    },
+                    "annotations": annotate("Plan migration", true, false, true, false)
                 },
                 {
                     "name": "refactor_test",
-                    "description": "Smoke-test a list of SQL queries against the current schema. Returns per-query status, row counts, and error messages.",
+                    "description": "Smoke-test a list of SQL queries against the current schema. Returns per-query status, row counts, and error messages. Read-only: queries are executed but no DDL is applied.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "queries": { "type": "array", "items": { "type": "string" }, "description": "SQL queries to test" }
                         },
                         "required": ["queries"]
-                    }
+                    },
+                    "annotations": annotate("Smoke-test queries", true, false, true, false)
+                },
+                {
+                    "name": "analytics_schema_refactor",
+                    "description": "Run the full schema-refactor agent: introspect the warehouse, rank hot tables from query history, propose CTAS staging→mart migration plans, and smoke-test them. Read-only — returns a report for review; no DDL is applied.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "tables": { "type": "array", "items": { "type": "string" }, "description": "Optional explicit tables to analyze (default: top tables from query history)" }
+                        }
+                    },
+                    "annotations": annotate("Schema refactor report", true, false, true, false)
                 },
                 {
                     "name": "dbt_list_models",
                     "description": "List every dbt model (pipeline step) in the project with its layer (staging/mart).",
-                    "inputSchema": { "type": "object", "properties": {} }
+                    "inputSchema": { "type": "object", "properties": {} },
+                    "annotations": annotate("List dbt models", true, false, true, false)
                 },
                 {
                     "name": "dbt_get_model",
@@ -205,7 +235,8 @@ impl McpServer {
                         "type": "object",
                         "properties": { "name": { "type": "string", "description": "Model name (no .sql)" } },
                         "required": ["name"]
-                    }
+                    },
+                    "annotations": annotate("Read dbt model", true, false, true, false)
                 },
                 {
                     "name": "dbt_write_model",
@@ -218,7 +249,8 @@ impl McpServer {
                             "layer": { "type": "string", "enum": ["staging", "marts"], "description": "Subfolder for new models (default marts)" }
                         },
                         "required": ["name", "sql"]
-                    }
+                    },
+                    "annotations": annotate("Write dbt model", false, true, true, false)
                 },
                 {
                     "name": "dbt_delete_model",
@@ -227,7 +259,8 @@ impl McpServer {
                         "type": "object",
                         "properties": { "name": { "type": "string" } },
                         "required": ["name"]
-                    }
+                    },
+                    "annotations": annotate("Delete dbt model", false, true, true, false)
                 },
                 {
                     "name": "pipeline_run",
@@ -235,38 +268,44 @@ impl McpServer {
                     "inputSchema": {
                         "type": "object",
                         "properties": { "select": { "type": "string", "description": "Optional dbt --select expression" } }
-                    }
+                    },
+                    "annotations": annotate("Run pipeline", false, false, true, false)
                 },
                 {
                     "name": "pipeline_status",
                     "description": "Read the pipeline DAG and last-run status from dbt artifacts (models, dependencies, per-node status).",
-                    "inputSchema": { "type": "object", "properties": {} }
+                    "inputSchema": { "type": "object", "properties": {} },
+                    "annotations": annotate("Pipeline status", true, false, true, false)
                 },
                 {
                     "name": "schedule_get",
                     "description": "Read the configured pipeline schedule (cron/interval).",
-                    "inputSchema": { "type": "object", "properties": {} }
+                    "inputSchema": { "type": "object", "properties": {} },
+                    "annotations": annotate("Read schedule", true, false, true, false)
                 },
                 {
                     "name": "schedule_set",
-                    "description": "Set the pipeline schedule. Provide 'cron' (e.g. '0 6 * * *') or 'interval_secs'.",
+                    "description": "Set the pipeline schedule. Provide 'cron' (e.g. '0 6 * * *') or 'interval_secs'. Overwrites any existing schedule.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "cron": { "type": "string", "description": "5/6-field cron expression" },
                             "interval_secs": { "type": "integer", "description": "Fixed interval in seconds" }
                         }
-                    }
+                    },
+                    "annotations": annotate("Set schedule", false, true, true, false)
                 },
                 {
                     "name": "dashboard_list",
                     "description": "List existing Metabase dashboards with their public URLs.",
-                    "inputSchema": { "type": "object", "properties": {} }
+                    "inputSchema": { "type": "object", "properties": {} },
+                    "annotations": annotate("List dashboards", true, false, true, true)
                 },
                 {
                     "name": "chart_list",
                     "description": "List saved native-Build charts (rendered in OpenSnow's Dashboards tab).",
-                    "inputSchema": { "type": "object", "properties": {} }
+                    "inputSchema": { "type": "object", "properties": {} },
+                    "annotations": annotate("List charts", true, false, true, false)
                 },
                 {
                     "name": "chart_create",
@@ -285,7 +324,8 @@ impl McpServer {
                             "sql": { "type": "string", "description": "Optional explicit SQL (overrides generated)" }
                         },
                         "required": ["title"]
-                    }
+                    },
+                    "annotations": annotate("Create chart", false, false, false, false)
                 },
                 {
                     "name": "dashboard_create",
@@ -312,7 +352,8 @@ impl McpServer {
                             }
                         },
                         "required": ["name", "cards"]
-                    }
+                    },
+                    "annotations": annotate("Create dashboard", false, false, false, true)
                 }
             ]
         }))
@@ -447,6 +488,27 @@ impl McpServer {
                 }))
             }
 
+            // ── Multi-step agent task: full schema-refactor report ─────────
+            "analytics_schema_refactor" => {
+                match crate::dispatch::run_task(
+                    "analytics_schema_refactor",
+                    Arc::clone(&self.engine),
+                    args,
+                )
+                .await
+                {
+                    Ok(report) => {
+                        let text = serde_json::to_string_pretty(&report)
+                            .unwrap_or_else(|_| report.to_string());
+                        Ok(json!({ "content": [{"type": "text", "text": text}] }))
+                    }
+                    Err(e) => Ok(json!({
+                        "content": [{"type": "text", "text": format!("Error: {e}")}],
+                        "isError": true
+                    })),
+                }
+            }
+
             // ── Analytics + platform tools routed through AgentRuntime ─────
             "schema_introspect" | "query_history" | "migration_planner" | "refactor_test"
             | "dbt_list_models" | "dbt_get_model" | "dbt_write_model" | "dbt_delete_model"
@@ -555,6 +617,24 @@ impl McpServer {
     }
 }
 
+/// Build an MCP tool-annotations object (per the MCP spec; required by ChatGPT
+/// app submission guidelines to correctly designate read-only vs write tools).
+fn annotate(
+    title: &str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+) -> Value {
+    json!({
+        "title": title,
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": open_world,
+    })
+}
+
 fn is_safe_identifier(identifier: &str) -> bool {
     !identifier.is_empty()
         && identifier
@@ -564,4 +644,103 @@ fn is_safe_identifier(identifier: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opensnow_core::EngineConfig;
+
+    fn test_server() -> McpServer {
+        McpServer::new(Arc::new(OpenSnowEngine::with_config(
+            EngineConfig::default(),
+        )))
+    }
+
+    fn request(method: &str, params: Option<Value>) -> McpRequest {
+        McpRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: method.into(),
+            params,
+        }
+    }
+
+    #[tokio::test]
+    async fn tools_list_every_tool_has_annotations() {
+        let server = test_server();
+        let resp = server
+            .handle_request(request("tools/list", None))
+            .await
+            .expect("tools/list is not a notification");
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        assert!(!tools.is_empty());
+        for tool in &tools {
+            let name = tool["name"].as_str().unwrap();
+            let ann = tool
+                .get("annotations")
+                .unwrap_or_else(|| panic!("tool {name} missing annotations"));
+            for key in [
+                "title",
+                "readOnlyHint",
+                "destructiveHint",
+                "idempotentHint",
+                "openWorldHint",
+            ] {
+                assert!(ann.get(key).is_some(), "tool {name} missing {key}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn tools_list_includes_schema_refactor_task() {
+        let server = test_server();
+        let resp = server
+            .handle_request(request("tools/list", None))
+            .await
+            .unwrap();
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        let refactor = tools
+            .iter()
+            .find(|t| t["name"] == "analytics_schema_refactor")
+            .expect("analytics_schema_refactor exposed via MCP");
+        assert_eq!(refactor["annotations"]["readOnlyHint"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn analytics_schema_refactor_returns_report() {
+        let server = test_server();
+        let resp = server
+            .handle_request(request(
+                "tools/call",
+                Some(json!({
+                    "name": "analytics_schema_refactor",
+                    "arguments": { "tables": ["fact_orders"] }
+                })),
+            ))
+            .await
+            .unwrap();
+        let result = resp.result.expect("tool call should produce a result");
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("candidates"), "report missing: {text}");
+    }
+
+    #[tokio::test]
+    async fn notifications_get_no_response() {
+        let server = test_server();
+        let req = McpRequest {
+            jsonrpc: "2.0".into(),
+            id: None,
+            method: "notifications/initialized".into(),
+            params: None,
+        };
+        assert!(server.handle_request(req).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ping_returns_empty_object() {
+        let server = test_server();
+        let resp = server.handle_request(request("ping", None)).await.unwrap();
+        assert_eq!(resp.result, Some(json!({})));
+    }
 }

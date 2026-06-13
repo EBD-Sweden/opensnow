@@ -41,9 +41,16 @@ pub fn build_runtime() -> AgentRuntime {
 
 /// Run a named agent task against the given engine and return its report as JSON.
 ///
+/// Accepts either an owned `OpenSnowEngine` or an `Arc<OpenSnowEngine>` (e.g. the
+/// MCP server's shared engine).
+///
 /// Supported tasks:
 /// - `"analytics_schema_refactor"` — params: `{ "tables": ["t1", "t2"] }` (optional)
-pub async fn run_task(task_name: &str, engine: OpenSnowEngine, params: Value) -> Result<Value> {
+pub async fn run_task(
+    task_name: &str,
+    engine: impl Into<std::sync::Arc<OpenSnowEngine>>,
+    params: Value,
+) -> Result<Value> {
     let runtime = build_runtime();
     let mut ctx = AgentContext::new(engine, "default", None);
 
