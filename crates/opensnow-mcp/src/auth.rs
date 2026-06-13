@@ -9,6 +9,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use axum::{
@@ -18,7 +19,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use opensnow_auth::{Claims, PrivilegeStore};
+use opensnow_auth::{Claims, ExternalIdpConfig, ExternalIdpVerifier, PrivilegeStore};
 use rusqlite::Connection;
 use tracing::warn;
 
@@ -43,6 +44,9 @@ pub struct AuthConfig {
     auth_token: Option<String>,
     roles: RoleMap,
     object_policy: Option<Arc<PrivilegeStore>>,
+    /// Optional external IdP verifier (OAuth 2.x / OIDC). When set, bearer tokens
+    /// issued by the org's IdP are accepted in addition to the modes above.
+    external_idp: Option<Arc<ExternalIdpVerifier>>,
 }
 
 impl AuthConfig {
@@ -52,6 +56,7 @@ impl AuthConfig {
             auth_token: None,
             roles: RoleMap::empty(),
             object_policy: None,
+            external_idp: None,
         }
     }
 
@@ -62,6 +67,7 @@ impl AuthConfig {
             auth_token: None,
             roles: RoleMap::empty(),
             object_policy: None,
+            external_idp: None,
         }
     }
 
@@ -78,11 +84,16 @@ impl AuthConfig {
                 .filter(|token| !token.is_empty()),
             roles: RoleMap::from_env(),
             object_policy: object_policy_from_env(),
+            external_idp: external_idp_from_env(),
         }
     }
 
     pub fn jwt_mode_enabled(&self) -> bool {
         self.jwt_secret.is_some()
+    }
+
+    pub fn external_idp_enabled(&self) -> bool {
+        self.external_idp.is_some()
     }
 
     pub fn can_write_token(&self, token: &str) -> bool {
@@ -94,9 +105,95 @@ impl AuthConfig {
         self
     }
 
+    pub fn with_external_idp(mut self, verifier: ExternalIdpVerifier) -> Self {
+        self.external_idp = Some(Arc::new(verifier));
+        self
+    }
+
     pub fn object_policy(&self) -> Option<&PrivilegeStore> {
         self.object_policy.as_deref()
     }
+
+    /// Validate the bearer token and return mapped [`Claims`] for modes that
+    /// carry scope/role information (external IdP, then HS256 JWT). Returns
+    /// `Ok(None)` for static-token / no-auth modes — those are gated by
+    /// [`require_auth`] but carry no scopes, so per-tool RBAC does not apply.
+    ///
+    /// `Err(UNAUTHORIZED)` only when a claim-carrying mode is the sole configured
+    /// auth and the token fails to validate.
+    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Option<Claims>, StatusCode> {
+        let token = bearer_from_headers(headers);
+
+        if let Some(verifier) = &self.external_idp {
+            if let Some(tok) = token
+                && let Ok(claims) = verifier.verify(tok).await
+            {
+                return Ok(Some(claims));
+            }
+            // External IdP is configured but did not validate this token. Fall
+            // through to other modes if any are configured; otherwise fail closed.
+            if self.jwt_secret.is_none() && self.auth_token.is_none() {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        }
+
+        if let Some(secret) = self.jwt_secret.as_deref() {
+            let claims = claims_from_headers(headers, secret)?;
+            return Ok(Some(claims));
+        }
+
+        Ok(None)
+    }
+}
+
+fn bearer_from_headers(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+}
+
+/// Build an external IdP verifier from `MCP_OIDC_*` env vars, if configured.
+///
+/// - `MCP_OIDC_ISSUER` (required to enable) — token `iss`, used for OIDC discovery.
+/// - `MCP_OIDC_AUDIENCE` — comma-separated accepted audiences (optional).
+/// - `MCP_OIDC_JWKS_URL` — explicit JWKS URL (optional; otherwise discovered).
+/// - `MCP_OIDC_JWKS_TTL_SECS` — JWKS cache TTL (optional, default 3600).
+/// - `MCP_OIDC_DEFAULT_ROLE` — role for tokens with no role claim (default PUBLIC).
+fn external_idp_from_env() -> Option<Arc<ExternalIdpVerifier>> {
+    let issuer = std::env::var("MCP_OIDC_ISSUER")
+        .ok()
+        .filter(|s| !s.trim().is_empty())?;
+    let audiences = std::env::var("MCP_OIDC_AUDIENCE")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let jwks_uri = std::env::var("MCP_OIDC_JWKS_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty());
+    let jwks_ttl = std::env::var("MCP_OIDC_JWKS_TTL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(3600));
+    let default_role = std::env::var("MCP_OIDC_DEFAULT_ROLE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "PUBLIC".to_string());
+
+    Some(Arc::new(ExternalIdpVerifier::new(ExternalIdpConfig {
+        issuer,
+        audiences,
+        jwks_uri,
+        jwks_ttl,
+        default_role,
+    })))
 }
 
 fn object_policy_from_env() -> Option<Arc<PrivilegeStore>> {
@@ -119,6 +216,20 @@ fn is_platform_admin(claims: &Claims) -> bool {
     matches!(claims.role.as_str(), "ACCOUNTADMIN" | "SYSADMIN")
         || has_scope(claims, "policy.admin")
         || has_scope(claims, "admin")
+}
+
+/// Claims-based equivalent of [`authorize_headers_with_config`]: true when the
+/// claims are a platform admin, hold all of `all_scopes`, or hold any of
+/// `any_scopes`. Used by the `/mcp` per-tool authorization path, which validates
+/// the token once (possibly via an external IdP) and authorizes on the result.
+pub(crate) fn claims_satisfy(claims: &Claims, all_scopes: &[&str], any_scopes: &[&str]) -> bool {
+    is_platform_admin(claims)
+        || (!all_scopes.is_empty() && all_scopes.iter().all(|scope| has_scope(claims, scope)))
+        || (!any_scopes.is_empty() && any_scopes.iter().any(|scope| has_scope(claims, scope)))
+}
+
+pub(crate) fn claims_is_admin(claims: &Claims) -> bool {
+    is_platform_admin(claims)
 }
 
 pub fn claims_from_headers(headers: &HeaderMap, secret: &str) -> Result<Claims, StatusCode> {
@@ -205,6 +316,21 @@ pub async fn require_auth(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // External IdP (OAuth 2.x / OIDC), when configured, is tried first. A token
+    // that validates here passes; otherwise we fall through to the other modes
+    // (so an org can run external + HS256 side by side), or fail closed if it is
+    // the only configured mode.
+    if let Some(verifier) = config.external_idp.clone() {
+        if let Some(token) = extract_bearer(&req)
+            && verifier.verify(&token).await.is_ok()
+        {
+            return Ok(next.run(req).await);
+        }
+        if config.jwt_secret.is_none() && config.auth_token.is_none() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+
     if let Some(secret) = config.jwt_secret.as_deref() {
         return require_jwt(secret, req, next).await;
     }

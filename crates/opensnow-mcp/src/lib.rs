@@ -156,13 +156,19 @@ pub(crate) fn authorize_mcp_sql(
     let Some(claims) = auth::claims_from_headers_with_config(headers, config)? else {
         return Ok(());
     };
-    if claims.role == "ACCOUNTADMIN"
-        || claims.role == "SYSADMIN"
-        || claims
-            .scopes
-            .iter()
-            .any(|s| s == "*" || s == "policy.admin")
-    {
+    authorize_sql_for_claims(&claims, config.object_policy(), sql)
+}
+
+/// Object-level SQL authorization against verified claims. Admins bypass;
+/// objectless SELECTs are allowed; everything else needs a matching privilege in
+/// the object policy. Shared by the header-based REST routes and the claims-based
+/// `/mcp` path (which may have validated the token via an external IdP).
+fn authorize_sql_for_claims(
+    claims: &opensnow_auth::Claims,
+    policy: Option<&opensnow_auth::PrivilegeStore>,
+    sql: &str,
+) -> Result<(), axum::http::StatusCode> {
+    if auth::claims_is_admin(claims) {
         return Ok(());
     }
     let requirements = analyze_mcp_sql(sql).map_err(|_| axum::http::StatusCode::FORBIDDEN)?;
@@ -173,7 +179,7 @@ pub(crate) fn authorize_mcp_sql(
             Err(axum::http::StatusCode::FORBIDDEN)
         };
     }
-    let Some(policy) = config.object_policy() else {
+    let Some(policy) = policy else {
         return Err(axum::http::StatusCode::FORBIDDEN);
     };
     for (privilege, object_type, object_name) in requirements {
@@ -190,47 +196,51 @@ pub(crate) fn authorize_mcp_sql(
 /// Scopes that grant read access to MCP retrieval/metadata tools.
 const MCP_READ_SCOPES: &[&str] = &["sql.query", "table.select", "mcp.read"];
 
-/// Per-tool authorization for the `/mcp` JSON-RPC endpoint.
+/// Per-tool authorization for the `/mcp` JSON-RPC endpoint, operating on the
+/// claims produced by `AuthConfig::authenticate` (which may have validated an
+/// HS256 JWT or an external OAuth/OIDC token).
 ///
-/// `require_auth` already proved the bearer token is valid; this maps each tool
-/// to the scope it needs so a read-only token cannot invoke write/control tools.
-/// Only meaningful in JWT mode — in dev/static-token modes the scope helpers
-/// short-circuit to `Ok` (the demo runs auth-off), preserving current behavior.
-/// Platform admins (ACCOUNTADMIN/SYSADMIN, `policy.admin`, `admin`, `*`) bypass.
-fn authorize_mcp_tool(
-    headers: &axum::http::HeaderMap,
-    config: &auth::AuthConfig,
+/// `claims == None` means a static-token / no-auth mode that `require_auth`
+/// already gated and which carries no scopes — so per-tool RBAC is skipped
+/// (preserving the auth-off demo and coarse-token deployments). When claims are
+/// present, each tool requires the scope it maps to; platform admins bypass.
+fn authorize_claims_for_tool(
+    claims: Option<&opensnow_auth::Claims>,
+    policy: Option<&opensnow_auth::PrivilegeStore>,
     tool: &str,
     arguments: &serde_json::Value,
 ) -> Result<(), axum::http::StatusCode> {
-    match tool {
+    let Some(claims) = claims else {
+        return Ok(());
+    };
+    let forbidden = axum::http::StatusCode::FORBIDDEN;
+    let ok = match tool {
         // Read-only retrieval / introspection / planning (no state change).
         "list_tables" | "describe_table" | "schema_introspect" | "query_history"
         | "migration_planner" | "refactor_test" | "analytics_schema_refactor" | "suggest_schema"
         | "dbt_list_models" | "dbt_get_model" | "pipeline_status" | "schedule_get"
-        | "dashboard_list" | "chart_list" => {
-            auth::authorize_headers_with_config(headers, config, &[], MCP_READ_SCOPES)
-        }
-        // SQL passthrough: object-level analysis classifies read vs DDL so a
-        // read scope can SELECT but not DROP/CREATE (mirrors the REST /query route).
+        | "dashboard_list" | "chart_list" => auth::claims_satisfy(claims, &[], MCP_READ_SCOPES),
+        // SQL passthrough: need a read scope AND pass object-level analysis so a
+        // read scope can SELECT but not DROP/CREATE.
         "query" => {
-            auth::authorize_headers_with_config(headers, config, &[], &["sql.query", "table.select"])?;
+            if !auth::claims_satisfy(claims, &[], &["sql.query", "table.select"]) {
+                return Err(forbidden);
+            }
             let sql = arguments.get("sql").and_then(|v| v.as_str()).unwrap_or("");
-            authorize_mcp_sql(headers, config, sql)
+            return authorize_sql_for_claims(claims, policy, sql);
         }
         // Write/control tools require admin or an explicit control scope.
-        "create_table" => {
-            auth::authorize_headers_with_config(headers, config, &["table.create"], &[])
-        }
+        "create_table" => auth::claims_satisfy(claims, &["table.create"], &[]),
         "dbt_write_model" | "dbt_delete_model" | "pipeline_run" | "schedule_set" => {
-            auth::authorize_headers_with_config(headers, config, &[], &["pipeline.admin"])
+            auth::claims_satisfy(claims, &[], &["pipeline.admin"])
         }
         "dashboard_create" | "chart_create" => {
-            auth::authorize_headers_with_config(headers, config, &[], &["dashboard.admin"])
+            auth::claims_satisfy(claims, &[], &["dashboard.admin"])
         }
         // Unknown tool: let the JSON-RPC handler return its own "unknown tool" error.
-        _ => Ok(()),
-    }
+        _ => true,
+    };
+    if ok { Ok(()) } else { Err(forbidden) }
 }
 
 pub(crate) fn authorize_mcp_table(
@@ -524,10 +534,18 @@ async fn mcp_jsonrpc(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
-    // Per-tool / per-method authorization on top of the transport-level
-    // `require_auth`. `tools/call` is gated by tool→scope mapping; `resources/read`
-    // (returns sample rows) needs a read scope; metadata methods (initialize,
-    // tools/list, resources/list, ping) only need a valid token.
+    // Validate the bearer token once (HS256 JWT or external OAuth/OIDC) and map
+    // it to claims; `None` for static-token / no-auth modes already gated by
+    // `require_auth`.
+    let claims = match auth_config.authenticate(&headers).await {
+        Ok(claims) => claims,
+        Err(status) => return status.into_response(),
+    };
+
+    // Per-tool / per-method authorization. `tools/call` is gated by tool→scope
+    // mapping; `resources/read` (returns sample rows) needs a read scope;
+    // metadata methods (initialize, tools/list, resources/list, ping) only need
+    // a valid token.
     let authz = match req.method.as_str() {
         "tools/call" => {
             let params = req.params.clone().unwrap_or_else(|| serde_json::json!({}));
@@ -536,11 +554,14 @@ async fn mcp_jsonrpc(
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            authorize_mcp_tool(&headers, &auth_config, tool, &args)
+            authorize_claims_for_tool(claims.as_ref(), auth_config.object_policy(), tool, &args)
         }
-        "resources/read" => {
-            auth::authorize_headers_with_config(&headers, &auth_config, &[], MCP_READ_SCOPES)
-        }
+        "resources/read" => match claims.as_ref() {
+            Some(claims) if !auth::claims_satisfy(claims, &[], MCP_READ_SCOPES) => {
+                Err(axum::http::StatusCode::FORBIDDEN)
+            }
+            _ => Ok(()),
+        },
         _ => Ok(()),
     };
     if let Err(status) = authz {
@@ -821,6 +842,118 @@ mod tests {
         )
         .await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ── External IdP (OAuth 2.x / OIDC) auth on /mcp ──────────────────────────
+
+    fn external_idp_token(scope: &str, roles: &[&str]) -> (opensnow_auth::ExternalIdpVerifier, String) {
+        use base64::Engine;
+        use rsa::traits::PublicKeyParts;
+        use rsa::{
+            RsaPrivateKey,
+            pkcs8::{EncodePrivateKey, LineEnding},
+        };
+
+        let mut rng = rand::rngs::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let public_key = private_key.to_public_key();
+        let pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
+        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
+        let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+        let jwk = opensnow_auth::Jwk {
+            kid: Some("idp-kid".to_string()),
+            kty: "RSA".to_string(),
+            use_: Some("sig".to_string()),
+            alg: Some("RS256".to_string()),
+            n: Some(b64(&public_key.n().to_bytes_be())),
+            e: Some(b64(&public_key.e().to_bytes_be())),
+            crv: None,
+            x: None,
+            y: None,
+        };
+        let verifier = opensnow_auth::ExternalIdpVerifier::with_static_jwks(
+            "https://idp.example",
+            vec!["opensnow".to_string()],
+            vec![jwk],
+        );
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+        header.kid = Some("idp-kid".to_string());
+        let claims = serde_json::json!({
+            "iss": "https://idp.example",
+            "aud": "opensnow",
+            "sub": "svc-agent",
+            "scope": scope,
+            "roles": roles,
+            "exp": chrono::Utc::now().timestamp() + 3600,
+        });
+        let token = jsonwebtoken::encode(&header, &claims, &encoding_key).unwrap();
+        (verifier, token)
+    }
+
+    async fn post_mcp_with_external(
+        verifier: opensnow_auth::ExternalIdpVerifier,
+        payload: &'static str,
+        token: &str,
+    ) -> Response<Body> {
+        let app = test_app_with_auth(auth::AuthConfig::disabled().with_external_idp(verifier));
+        let req = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(payload))
+            .unwrap();
+        ServiceExt::<Request<Body>>::oneshot(app, req).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn external_idp_token_passes_gate_and_lists_tools() {
+        let (verifier, token) = external_idp_token("sql.query", &[]);
+        let resp = post_mcp_with_external(
+            verifier,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            &token,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn external_idp_invalid_token_is_unauthorized() {
+        let (verifier, _good) = external_idp_token("sql.query", &[]);
+        let resp = post_mcp_with_external(
+            verifier,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            "not-a-real-jwt",
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn external_idp_read_scope_forbidden_on_write_tool() {
+        let (verifier, token) = external_idp_token("sql.query table.select", &[]);
+        let resp = post_mcp_with_external(
+            verifier,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"dbt_write_model","arguments":{"name":"m","sql":"select 1"}}}"#,
+            &token,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn external_idp_admin_role_allowed_on_write_tool() {
+        // ACCOUNTADMIN role from the IdP bypasses scope checks.
+        let (verifier, token) = external_idp_token("", &["ACCOUNTADMIN"]);
+        let resp = post_mcp_with_external(
+            verifier,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"schedule_set","arguments":{"cron":"0 6 * * *"}}}"#,
+            &token,
+        )
+        .await;
+        assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

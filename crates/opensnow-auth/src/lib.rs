@@ -1,6 +1,7 @@
 pub mod contract;
 pub mod jwt;
 pub mod middleware;
+pub mod oidc_verifier;
 pub mod privileges;
 pub mod roles;
 pub mod secrets;
@@ -18,6 +19,7 @@ pub use jwt::{
     Claims, EnterpriseJwtConfig, EnterpriseJwtKey, JsonWebKey, JwtManager, SsoSessionTokenRequest,
 };
 pub use middleware::AuthConfig;
+pub use oidc_verifier::{ExternalIdpConfig, ExternalIdpVerifier, Jwk};
 pub use privileges::{ObjectType, Privilege, PrivilegeStore};
 pub use roles::{BuiltinRole, RoleStore};
 pub use secrets::{
