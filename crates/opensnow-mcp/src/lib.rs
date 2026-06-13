@@ -219,7 +219,9 @@ fn authorize_claims_for_tool(
         "list_tables" | "describe_table" | "schema_introspect" | "query_history"
         | "migration_planner" | "refactor_test" | "analytics_schema_refactor" | "suggest_schema"
         | "dbt_list_models" | "dbt_get_model" | "pipeline_status" | "schedule_get"
-        | "dashboard_list" | "chart_list" => auth::claims_satisfy(claims, &[], MCP_READ_SCOPES),
+        | "dashboard_list" | "chart_list" | "warehouse_list" => {
+            auth::claims_satisfy(claims, &[], MCP_READ_SCOPES)
+        }
         // SQL passthrough: need a read scope AND pass object-level analysis so a
         // read scope can SELECT but not DROP/CREATE.
         "query" => {
@@ -230,10 +232,10 @@ fn authorize_claims_for_tool(
             return authorize_sql_for_claims(claims, policy, sql);
         }
         // Write/control tools require admin or an explicit control scope.
-        "create_table" => auth::claims_satisfy(claims, &["table.create"], &[]),
-        "dbt_write_model" | "dbt_delete_model" | "pipeline_run" | "schedule_set" => {
-            auth::claims_satisfy(claims, &[], &["pipeline.admin"])
-        }
+        "create_table" | "register_table" => auth::claims_satisfy(claims, &["table.create"], &[]),
+        "dbt_write_model" | "dbt_delete_model" | "pipeline_run" | "schedule_set" | "table_drop"
+        | "warehouse_create" | "materialized_view_create" | "materialized_view_refresh"
+        | "materialized_view_drop" => auth::claims_satisfy(claims, &[], &["pipeline.admin"]),
         "dashboard_create" | "chart_create" => {
             auth::claims_satisfy(claims, &[], &["dashboard.admin"])
         }

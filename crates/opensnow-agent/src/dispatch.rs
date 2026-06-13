@@ -12,6 +12,10 @@ use crate::platform_tools::{
     ScheduleGetTool, ScheduleSetTool,
 };
 use crate::schema_refactor_task::AnalyticsSchemaRefactorTask;
+use crate::warehouse_tools::{
+    MaterializedViewCreateTool, MaterializedViewDropTool, MaterializedViewRefreshTool,
+    RegisterTableTool, TableDropTool, WarehouseCreateTool, WarehouseListTool,
+};
 
 /// Build a fully-wired `AgentRuntime` with all analytics tools registered.
 ///
@@ -36,6 +40,14 @@ pub fn build_runtime() -> AgentRuntime {
     rt.register_tool(DashboardCreateTool);
     rt.register_tool(ChartListTool);
     rt.register_tool(ChartCreateTool);
+    // Warehouse / table / materialized-view control plane.
+    rt.register_tool(WarehouseListTool);
+    rt.register_tool(WarehouseCreateTool);
+    rt.register_tool(RegisterTableTool);
+    rt.register_tool(TableDropTool);
+    rt.register_tool(MaterializedViewCreateTool);
+    rt.register_tool(MaterializedViewRefreshTool);
+    rt.register_tool(MaterializedViewDropTool);
     rt
 }
 

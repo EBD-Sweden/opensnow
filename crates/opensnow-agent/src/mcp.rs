@@ -355,6 +355,87 @@ impl McpServer {
                         "required": ["name", "cards"]
                     },
                     "annotations": annotate("Create dashboard", false, false, false, true)
+                },
+                {
+                    "name": "warehouse_list",
+                    "description": "List virtual warehouses (compute) with their size and state.",
+                    "inputSchema": { "type": "object", "properties": {} },
+                    "annotations": annotate("List warehouses", true, false, true, false)
+                },
+                {
+                    "name": "warehouse_create",
+                    "description": "Create a virtual warehouse. Optional size (xsmall|small|medium|large|xlarge), min_nodes, max_nodes, auto_suspend_secs.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Warehouse name (letters/digits/underscore)" },
+                            "size": { "type": "string", "enum": ["xsmall", "small", "medium", "large", "xlarge"] },
+                            "min_nodes": { "type": "integer" },
+                            "max_nodes": { "type": "integer" },
+                            "auto_suspend_secs": { "type": "integer", "description": "Idle seconds before auto-suspend" }
+                        },
+                        "required": ["name"]
+                    },
+                    "annotations": annotate("Create warehouse", false, false, true, false)
+                },
+                {
+                    "name": "register_table",
+                    "description": "Register an external Parquet file as a queryable table by name and URI/path. Loads data that is not expressible via SQL alone.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Table name to register" },
+                            "uri": { "type": "string", "description": "Parquet path or URL" }
+                        },
+                        "required": ["name", "uri"]
+                    },
+                    "annotations": annotate("Register table", false, false, true, true)
+                },
+                {
+                    "name": "table_drop",
+                    "description": "Drop a table. By default uses IF EXISTS (idempotent); set if_exists=false to require the table to exist.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "if_exists": { "type": "boolean", "description": "Default true" }
+                        },
+                        "required": ["name"]
+                    },
+                    "annotations": annotate("Drop table", false, true, true, false)
+                },
+                {
+                    "name": "materialized_view_create",
+                    "description": "Create a materialized view from a SELECT query.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Materialized view name" },
+                            "sql": { "type": "string", "description": "SELECT query that defines the view" }
+                        },
+                        "required": ["name", "sql"]
+                    },
+                    "annotations": annotate("Create materialized view", false, false, false, false)
+                },
+                {
+                    "name": "materialized_view_refresh",
+                    "description": "Refresh a materialized view, recomputing it from its source.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "name": { "type": "string" } },
+                        "required": ["name"]
+                    },
+                    "annotations": annotate("Refresh materialized view", false, false, true, false)
+                },
+                {
+                    "name": "materialized_view_drop",
+                    "description": "Drop a materialized view.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "name": { "type": "string" } },
+                        "required": ["name"]
+                    },
+                    "annotations": annotate("Drop materialized view", false, true, true, false)
                 }
             ]
         }))
@@ -514,7 +595,10 @@ impl McpServer {
             "schema_introspect" | "query_history" | "migration_planner" | "refactor_test"
             | "dbt_list_models" | "dbt_get_model" | "dbt_write_model" | "dbt_delete_model"
             | "pipeline_run" | "pipeline_status" | "schedule_get" | "schedule_set"
-            | "dashboard_list" | "dashboard_create" | "chart_list" | "chart_create" => {
+            | "dashboard_list" | "dashboard_create" | "chart_list" | "chart_create"
+            | "warehouse_list" | "warehouse_create" | "register_table" | "table_drop"
+            | "materialized_view_create" | "materialized_view_refresh"
+            | "materialized_view_drop" => {
                 let mut ctx = AgentContext::new(Arc::clone(&self.engine), "default", None);
                 let runtime = build_runtime();
 

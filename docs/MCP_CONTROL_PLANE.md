@@ -37,9 +37,35 @@ write/delete actions — a requirement for ChatGPT app submission (see
 | `query`, `list_tables`, `describe_table`, `create_table`, `suggest_schema` | Data access & schema design |
 | `schema_introspect`, `query_history`, `migration_planner`, `refactor_test` | Schema-refactor agent tools (read-only) |
 | `analytics_schema_refactor` `{tables?}` | Run the **full schema-refactor agent** in one call: introspect → rank hot tables from query history → propose CTAS migration plans → smoke-test. Read-only report; pair with `schedule_set` or an external scheduler to run it periodically |
+| `warehouse_list` / `warehouse_create` `{name, size?, min_nodes?, max_nodes?, auto_suspend_secs?}` | List / create virtual warehouses (compute) |
+| `register_table` `{name, uri}` | Register an external Parquet file as a queryable table (loads data not expressible via SQL alone) |
+| `table_drop` `{name, if_exists?}` | Drop a table (idempotent by default) |
+| `materialized_view_create` `{name, sql}` / `_refresh` `{name}` / `_drop` `{name}` | Materialized-view lifecycle |
+
+**Coverage note:** any SQL-expressible operation (e.g. `CREATE WAREHOUSE`,
+`COPY INTO`, `CREATE MATERIALIZED VIEW`, `DROP`) is also reachable directly via
+the `query` tool; the structured tools above exist for discoverability, safe
+identifier handling, and per-tool authorization.
 
 The dashboard tools need Metabase credentials in the environment:
 `METABASE_URL` (default `https://metabase.ebdsweden.com`), `MB_USER`, `MB_PASSWORD`.
+
+## Authentication modes
+
+The remote `/mcp` endpoint accepts, in precedence order, whichever modes are
+configured — so an organization picks what fits their stack:
+
+| Mode | Enable with | Notes |
+|---|---|---|
+| External OAuth 2.x / OIDC | `MCP_OIDC_ISSUER` (+ optional `MCP_OIDC_AUDIENCE`, `MCP_OIDC_JWKS_URL`, `MCP_OIDC_JWKS_TTL_SECS`, `MCP_OIDC_DEFAULT_ROLE`) | Validates tokens issued by the org's own IdP (Okta, Entra ID, Auth0, Keycloak, Google…) via OIDC discovery + JWKS. Asymmetric algs only (RS256/384/512, ES256). Scopes/roles map from `scope`/`scp`/`scopes` and `roles`/`role`/`groups`. |
+| Shared-secret JWT (HS256) | `MCP_JWT_SECRET` | OpenSnow-issued tokens (`/auth/token`). |
+| Static bearer token | `MCP_AUTH_TOKEN`, or `MCP_TOKEN_<ROLE>=<token>` | Coarse; no per-tool scope RBAC. |
+| None (dev/demo) | _unset_ | Open; used by the public demo. |
+
+In the JWT and OIDC modes, per-tool RBAC applies: read tools need a read scope
+(`sql.query`/`table.select`/`mcp.read`); writes need a control scope
+(`table.create`, `pipeline.admin`, `dashboard.admin`) or an admin role
+(`ACCOUNTADMIN`/`SYSADMIN`, scope `policy.admin`/`admin`/`*`).
 
 ## Connect Claude (MCP)
 

@@ -88,9 +88,27 @@ Pass 2 (06-13):
 - **Privacy policy draft** (gap 3) — `docs/PRIVACY_POLICY.md`; needs hosting +
   legal review.
 
-## Remaining before a published-app submission
+## Direction change (2026-06-13)
 
-1. OAuth 2.1 + dynamic client registration on `/mcp` (gap 1) — the gatekeeper.
+OpenSnow is **self-hosted per organization**, so a public ChatGPT-directory app
+is no longer the goal — each org connects their own LLM/app to their own
+instance over MCP. Focus shifted to (a) complete MCP operation coverage and
+(b) pluggable authentication. See `[[product-direction-mcp-first]]`.
+
+- **Auth — done:** the `/mcp` endpoint now accepts external **OAuth 2.x / OIDC**
+  tokens from the org's own IdP (issuer/JWKS, asymmetric-only), alongside HS256
+  JWT and static-token modes (`opensnow-auth::ExternalIdpVerifier`,
+  `MCP_OIDC_*`). Per-tool RBAC maps the validated scopes/role. This supersedes
+  the earlier "OAuth 2.1 + dynamic client registration for the public directory"
+  gap, which only mattered for a directory submission.
+- **MCP coverage — expanded:** added `warehouse_list/create`, `register_table`,
+  `table_drop`, `materialized_view_create/refresh/drop` (29 tools total). The
+  `query` tool already covers any SQL-expressible operation.
+
+## Remaining (only if a public-directory submission is ever revived)
+
+1. OAuth 2.1 **dynamic client registration** specifically (the IdP token
+   validation above already covers normal org use).
 2. Host + legally review the privacy policy (gap 3).
 3. Submission logistics (gap 4) — org/dashboard work, not code.
 4. Optional: embedded UI component (gap 6), SSE streaming (gap 7).
