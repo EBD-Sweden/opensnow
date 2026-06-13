@@ -178,11 +178,12 @@ impl McpServer {
                 },
                 {
                     "name": "query_history",
-                    "description": "Retrieve recent query history from the catalog. Useful for identifying hot tables and usage patterns.",
+                    "description": "Retrieve recent query history (SQL + duration/row metrics) from the catalog. Useful for identifying hot tables and usage patterns. Per-user attribution is omitted by default; pass include_user=true to include it.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "limit": { "type": "integer", "description": "Max queries to return (default 100)" }
+                            "limit": { "type": "integer", "description": "Max queries to return (default 100)" },
+                            "include_user": { "type": "boolean", "description": "Include the per-user attribution column (default false)" }
                         }
                     },
                     "annotations": annotate("Query history", true, false, true, false)

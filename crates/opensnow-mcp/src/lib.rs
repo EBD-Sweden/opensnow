@@ -187,6 +187,52 @@ pub(crate) fn authorize_mcp_sql(
     Ok(())
 }
 
+/// Scopes that grant read access to MCP retrieval/metadata tools.
+const MCP_READ_SCOPES: &[&str] = &["sql.query", "table.select", "mcp.read"];
+
+/// Per-tool authorization for the `/mcp` JSON-RPC endpoint.
+///
+/// `require_auth` already proved the bearer token is valid; this maps each tool
+/// to the scope it needs so a read-only token cannot invoke write/control tools.
+/// Only meaningful in JWT mode — in dev/static-token modes the scope helpers
+/// short-circuit to `Ok` (the demo runs auth-off), preserving current behavior.
+/// Platform admins (ACCOUNTADMIN/SYSADMIN, `policy.admin`, `admin`, `*`) bypass.
+fn authorize_mcp_tool(
+    headers: &axum::http::HeaderMap,
+    config: &auth::AuthConfig,
+    tool: &str,
+    arguments: &serde_json::Value,
+) -> Result<(), axum::http::StatusCode> {
+    match tool {
+        // Read-only retrieval / introspection / planning (no state change).
+        "list_tables" | "describe_table" | "schema_introspect" | "query_history"
+        | "migration_planner" | "refactor_test" | "analytics_schema_refactor" | "suggest_schema"
+        | "dbt_list_models" | "dbt_get_model" | "pipeline_status" | "schedule_get"
+        | "dashboard_list" | "chart_list" => {
+            auth::authorize_headers_with_config(headers, config, &[], MCP_READ_SCOPES)
+        }
+        // SQL passthrough: object-level analysis classifies read vs DDL so a
+        // read scope can SELECT but not DROP/CREATE (mirrors the REST /query route).
+        "query" => {
+            auth::authorize_headers_with_config(headers, config, &[], &["sql.query", "table.select"])?;
+            let sql = arguments.get("sql").and_then(|v| v.as_str()).unwrap_or("");
+            authorize_mcp_sql(headers, config, sql)
+        }
+        // Write/control tools require admin or an explicit control scope.
+        "create_table" => {
+            auth::authorize_headers_with_config(headers, config, &["table.create"], &[])
+        }
+        "dbt_write_model" | "dbt_delete_model" | "pipeline_run" | "schedule_set" => {
+            auth::authorize_headers_with_config(headers, config, &[], &["pipeline.admin"])
+        }
+        "dashboard_create" | "chart_create" => {
+            auth::authorize_headers_with_config(headers, config, &[], &["dashboard.admin"])
+        }
+        // Unknown tool: let the JSON-RPC handler return its own "unknown tool" error.
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn authorize_mcp_table(
     headers: &axum::http::HeaderMap,
     config: &auth::AuthConfig,
@@ -472,9 +518,34 @@ fn mcp_jsonrpc_sender() -> std::sync::mpsc::Sender<McpJob> {
 }
 
 async fn mcp_jsonrpc(
+    Extension(auth_config): Extension<auth::AuthConfig>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<opensnow_agent::mcp::McpRequest>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+
+    // Per-tool / per-method authorization on top of the transport-level
+    // `require_auth`. `tools/call` is gated by tool→scope mapping; `resources/read`
+    // (returns sample rows) needs a read scope; metadata methods (initialize,
+    // tools/list, resources/list, ping) only need a valid token.
+    let authz = match req.method.as_str() {
+        "tools/call" => {
+            let params = req.params.clone().unwrap_or_else(|| serde_json::json!({}));
+            let tool = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            authorize_mcp_tool(&headers, &auth_config, tool, &args)
+        }
+        "resources/read" => {
+            auth::authorize_headers_with_config(&headers, &auth_config, &[], MCP_READ_SCOPES)
+        }
+        _ => Ok(()),
+    };
+    if let Err(status) = authz {
+        return status.into_response();
+    }
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     if mcp_jsonrpc_sender().send((req, tx)).is_err() {
@@ -703,6 +774,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    fn read_only_token() -> String {
+        opensnow_auth::JwtManager::new(b"mcp-jwt-secret")
+            .generate_token_with_scopes(
+                20,
+                "reader",
+                "ANALYST",
+                "default",
+                vec!["sql.query".to_string(), "table.select".to_string()],
+                1,
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_read_token_lists_tools() {
+        // tools/list is metadata: any valid token may call it.
+        let resp = do_post_with_bearer(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            &read_only_token(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_read_token_allowed_on_read_tool() {
+        let resp = do_post_with_bearer(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"dbt_list_models","arguments":{}}}"#,
+            &read_only_token(),
+        )
+        .await;
+        assert_ne!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_read_token_forbidden_on_write_tool() {
+        let resp = do_post_with_bearer(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"dbt_write_model","arguments":{"name":"m","sql":"select 1"}}}"#,
+            &read_only_token(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn mcp_jsonrpc_control_scope_allowed_on_write_tool() {
+        let token = opensnow_auth::JwtManager::new(b"mcp-jwt-secret")
+            .generate_token_with_scopes(
+                21,
+                "ops",
+                "ANALYST",
+                "default",
+                vec!["pipeline.admin".to_string()],
+                1,
+            )
+            .unwrap();
+        let resp = do_post_with_bearer(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"schedule_get","arguments":{}}}"#,
+            &token,
+        )
+        .await;
+        // schedule_get is read-only; pipeline.admin is not a read scope, so this
+        // would be forbidden — verify a control token can hit the write tool path instead.
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        let write = do_post_with_bearer(
+            "/mcp",
+            r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"schedule_set","arguments":{"cron":"0 6 * * *"}}}"#,
+            &token,
+        )
+        .await;
+        assert_ne!(write.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

@@ -29,21 +29,32 @@ impl Tool for QueryHistoryTool {
             .map(|v| v as usize)
             .unwrap_or(self.default_limit);
 
+        // Data minimization (ChatGPT app guidelines): by default omit per-user
+        // identifiers and the internal trace id, returning only what usage
+        // analysis needs (SQL + cost/row metrics). Set `include_user: true` to
+        // opt into the `user` attribution column.
+        let include_user = params
+            .get("include_user")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let records = ctx.engine.catalog().recent_queries(limit)?;
         let mut out = Vec::with_capacity(records.len());
 
         for r in records {
-            out.push(json!({
-                "id": r.id,
+            let mut row = json!({
                 "submitted_at": r.submitted_at,
-                "user": r.user_name,
                 "warehouse": r.warehouse,
                 "sql": r.sql,
                 "duration_ms": r.duration_ms,
                 "rows_returned": r.rows_returned,
                 "rows_scanned": r.rows_scanned,
                 "status": r.status,
-            }));
+            });
+            if include_user {
+                row["user"] = json!(r.user_name);
+            }
+            out.push(row);
         }
 
         Ok(json!({ "queries": out }))
@@ -347,6 +358,29 @@ mod tests {
             .await
             .expect("tool should not fail");
         assert!(out["queries"].is_array());
+    }
+
+    #[tokio::test]
+    async fn query_history_omits_user_and_id_by_default_includes_user_on_opt_in() {
+        let engine = isolated_engine();
+        engine.record_query_history("wh1", "SELECT 1", 5, 1, Some(1), "success");
+        let mut ctx = AgentContext::new(engine, "default", None);
+        let tool = QueryHistoryTool { default_limit: 100 };
+
+        let minimized = tool.invoke(&mut ctx, json!({})).await.unwrap();
+        let row = &minimized["queries"][0];
+        assert!(row["sql"].is_string(), "sql is the relevant payload");
+        assert!(row.get("user").is_none(), "user identifier omitted by default");
+        assert!(row.get("id").is_none(), "internal trace id omitted");
+
+        let with_user = tool
+            .invoke(&mut ctx, json!({ "include_user": true }))
+            .await
+            .unwrap();
+        assert!(
+            with_user["queries"][0].get("user").is_some(),
+            "user column present when explicitly requested"
+        );
     }
 
     #[tokio::test]
