@@ -115,10 +115,14 @@ with the `/mcp` URL. JSON-RPC notifications receive `202 Accepted` with no
 body; SSE streaming is not yet implemented (`GET /mcp` returns 405, which the
 streamable-HTTP spec permits).
 
-> **Scope note:** `/mcp` is authenticated but not yet object-policy scoped —
-> any valid token can call any tool, including write tools. Use a dedicated
-> token and treat it as admin-level. Fine-grained per-tool RBAC is on the
-> ChatGPT-app gap list (`CHATGPT_APP_ALIGNMENT.md`).
+> **Scope note:** `/mcp` enforces per-tool RBAC for claim-carrying JWT/OIDC
+> modes: read-only tokens can list/read and are forbidden from write/control
+> tools, while write/control tools require the mapped control scope or an admin
+> role. The `query` tool also reuses the object-policy SQL analysis path where
+> configured. Legacy static-token mode remains coarse-grained (token/role-map
+> only), and object-level enforcement is still a lightweight SQL/object-policy
+> slice rather than complete Snowflake-equivalent policy coverage for every tool
+> and SQL shape.
 
 ## Use from the shell (CLI)
 
