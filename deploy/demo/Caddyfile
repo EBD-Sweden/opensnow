@@ -4,6 +4,16 @@
 {$OPENSNOW_DEMO_DOMAIN} {
 	encode gzip
 
+	# Access log (JSON, rolled) so we can actually measure visitors — there is
+	# no other analytics on the demo. Persisted to the caddy-logs volume.
+	log {
+		output file /var/log/caddy/opensnow-access.log {
+			roll_size 10MB
+			roll_keep 10
+		}
+		format json
+	}
+
 	# Block admin/write endpoints from the public internet (defense in depth;
 	# they are admin-scoped in-app, and the seed reaches OpenSnow internally,
 	# bypassing Caddy). The read-only /pipeline view + gated /api/v1/query stay open.
@@ -22,5 +32,14 @@
 # Metabase on its own subdomain — embedded into the EBD site via public iframe.
 {$OPENSNOW_DASH_DOMAIN} {
 	encode gzip
+
+	log {
+		output file /var/log/caddy/metabase-access.log {
+			roll_size 10MB
+			roll_keep 10
+		}
+		format json
+	}
+
 	reverse_proxy metabase:3000
 }

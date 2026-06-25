@@ -113,6 +113,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+      - caddy-logs:/var/log/caddy
     networks: [demo]
     depends_on: [opensnow, metabase]
 
@@ -125,3 +126,4 @@ volumes:
   metabase-data:
   caddy-data:
   caddy-config:
+  caddy-logs:
