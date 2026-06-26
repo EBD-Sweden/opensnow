@@ -43,3 +43,10 @@
 
 	reverse_proxy metabase:3000
 }
+
+# Guest sites co-hosted on this VM (e.g. Bokra) drop their own *.caddy file into
+# the shared Caddy's /config/sites/ directory and own it entirely. This single,
+# stable import line is the ONLY OpenSnow-side coupling — regenerating this
+# Caddyfile keeps the line, so an OpenSnow deploy can never take a guest down.
+# (Glob matches nothing → no-op, so this is safe even with no guests.)
+import /config/sites/*.caddy
