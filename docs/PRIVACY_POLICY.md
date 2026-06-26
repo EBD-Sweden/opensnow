@@ -4,15 +4,11 @@
 **Operator:** EBD Sweden ("we", "us")
 **Contact:** hao.huang@ebdsweden.com
 
-This policy explains what data the OpenSnow app/connector processes when you
-connect it to an LLM client (for example, a ChatGPT connector or Claude), and
-how we handle it. It is written to satisfy the disclosure requirements in
-OpenAI's App Developer Terms and Apps SDK submission guidelines.
-
-> **Hosting note (remove before publishing):** publish this at a stable public
-> URL — e.g. `https://opensnow.ebdsweden.com/privacy` — and reference that URL
-> in the app submission. Have it reviewed against your jurisdiction's
-> requirements (GDPR, since EBD Sweden is EU-based) before going live.
+This policy explains what data an OpenSnow app/connector processes when you
+connect it to an LLM client (for example, a ChatGPT developer-mode connector or
+Claude), and how the self-hosted OpenSnow instance handles it. It is a reviewed
+repository policy for self-hosted/customer-hosted deployments, not evidence that
+the public demo currently hosts a privacy page or a public-directory app.
 
 ## 1. What OpenSnow is
 

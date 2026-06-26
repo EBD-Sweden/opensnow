@@ -7,10 +7,13 @@ define pipelines, run the pipeline, change the schedule, and build dashboards.
 - **MCP server, stdio** (`opensnow mcp`) — JSON-RPC 2.0 over stdio. Point an MCP
   client (Claude Code, Claude Desktop) at it and Claude can iterate pipelines
   for you.
-- **MCP server, remote HTTP** (`POST /mcp` on the `opensnow-mcp` HTTP server,
-  port 8090) — the same JSON-RPC handler over streamable HTTP, behind the
-  server's bearer-token / JWT auth. This is the endpoint remote clients
-  (ChatGPT connectors/apps, Claude remote MCP) connect to.
+- **MCP server, remote HTTP** (`POST /mcp` on a self-hosted or customer-hosted
+  `opensnow-mcp` HTTP server, port 8090) — the same JSON-RPC handler over
+  streamable HTTP, behind the server's bearer-token / JWT/OIDC auth. This is
+  the endpoint remote clients (ChatGPT developer-mode connectors, Claude remote
+  MCP) connect to when the operator exposes it; the public demo does not currently
+  expose `/mcp`; a 404 from that demo host is expected until it is explicitly
+  deployed with the MCP service.
 - **CLI** (`opensnow agent <tool> '<json>'`) — invoke any tool directly from a
   shell or script.
 
@@ -93,7 +96,8 @@ joining it to house prices, then run the pipeline"* — it will call
 
 ## Connect a remote LLM (ChatGPT, claude.ai) over HTTP
 
-Run the HTTP server and point the client at `/mcp`:
+Run your self-hosted or customer-hosted HTTP server and point the client at that
+host's `/mcp` endpoint:
 
 ```bash
 # Bearer-token auth (single shared token):
@@ -111,9 +115,10 @@ curl -s -X POST https://your-host:8090/mcp \
 ```
 
 In ChatGPT: *Settings → Connectors → Add custom connector* (developer mode)
-with the `/mcp` URL. JSON-RPC notifications receive `202 Accepted` with no
-body; SSE streaming is not yet implemented (`GET /mcp` returns 405, which the
-streamable-HTTP spec permits).
+with your hosted `/mcp` URL. Do not use the public demo host for MCP readiness
+evidence unless it has been deployed and verified separately. JSON-RPC
+notifications receive `202 Accepted` with no body; SSE streaming is not yet
+implemented (`GET /mcp` returns 405, which the streamable-HTTP spec permits).
 
 > **Scope note:** `/mcp` enforces per-tool RBAC for claim-carrying JWT/OIDC
 > modes: read-only tokens can list/read and are forbidden from write/control

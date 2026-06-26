@@ -478,27 +478,34 @@ impl JwtManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use jsonwebtoken::Algorithm;
-    use rsa::{
-        RsaPrivateKey,
-        pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding},
-    };
+    use openssl::rsa::Rsa;
+
+    fn b64url(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn rsa_test_material() -> (Vec<u8>, Vec<u8>, String, String) {
+        let key = Rsa::generate(2048).unwrap();
+        let private_pem = key.private_key_to_pem().unwrap();
+        let public_pem = key.public_key_to_pem().unwrap();
+        let n = b64url(&key.n().to_vec());
+        let e = b64url(&key.e().to_vec());
+        (private_pem, public_pem, n, e)
+    }
 
     fn enterprise_rs256_manager(kid: &str) -> JwtManager {
-        let mut rng = rand::rngs::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let public_key = private_key.to_public_key();
-        let private_pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
-        let public_pem = public_key.to_public_key_pem(LineEnding::LF).unwrap();
+        let (private_pem, public_pem, n, e) = rsa_test_material();
         JwtManager::enterprise(EnterpriseJwtConfig {
             issuer: "https://opensnow.example/auth".to_string(),
             audience: "opensnow-api".to_string(),
             active_key: EnterpriseJwtKey::from_pem(
                 kid,
                 Algorithm::RS256,
-                private_pem.as_bytes(),
-                public_pem.as_bytes(),
-                Some(JsonWebKey::rsa(kid, "test-n", "AQAB")),
+                &private_pem,
+                &public_pem,
+                Some(JsonWebKey::rsa(kid, &n, &e)),
             )
             .unwrap(),
             verification_keys: vec![],

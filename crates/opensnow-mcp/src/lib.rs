@@ -216,12 +216,21 @@ fn authorize_claims_for_tool(
     let forbidden = axum::http::StatusCode::FORBIDDEN;
     let ok = match tool {
         // Read-only retrieval / introspection / planning (no state change).
-        "list_tables" | "describe_table" | "schema_introspect" | "query_history"
-        | "migration_planner" | "refactor_test" | "analytics_schema_refactor" | "suggest_schema"
-        | "dbt_list_models" | "dbt_get_model" | "pipeline_status" | "schedule_get"
-        | "dashboard_list" | "chart_list" | "warehouse_list" => {
-            auth::claims_satisfy(claims, &[], MCP_READ_SCOPES)
-        }
+        "list_tables"
+        | "describe_table"
+        | "schema_introspect"
+        | "query_history"
+        | "migration_planner"
+        | "refactor_test"
+        | "analytics_schema_refactor"
+        | "suggest_schema"
+        | "dbt_list_models"
+        | "dbt_get_model"
+        | "pipeline_status"
+        | "schedule_get"
+        | "dashboard_list"
+        | "chart_list"
+        | "warehouse_list" => auth::claims_satisfy(claims, &[], MCP_READ_SCOPES),
         // SQL passthrough: need a read scope AND pass object-level analysis so a
         // read scope can SELECT but not DROP/CREATE.
         "query" => {
@@ -233,8 +242,14 @@ fn authorize_claims_for_tool(
         }
         // Write/control tools require admin or an explicit control scope.
         "create_table" | "register_table" => auth::claims_satisfy(claims, &["table.create"], &[]),
-        "dbt_write_model" | "dbt_delete_model" | "pipeline_run" | "schedule_set" | "table_drop"
-        | "warehouse_create" | "materialized_view_create" | "materialized_view_refresh"
+        "dbt_write_model"
+        | "dbt_delete_model"
+        | "pipeline_run"
+        | "schedule_set"
+        | "table_drop"
+        | "warehouse_create"
+        | "materialized_view_create"
+        | "materialized_view_refresh"
         | "materialized_view_drop" => auth::claims_satisfy(claims, &[], &["pipeline.admin"]),
         "dashboard_create" | "chart_create" => {
             auth::claims_satisfy(claims, &[], &["dashboard.admin"])
@@ -757,11 +772,7 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_jsonrpc_tools_list_returns_annotated_tools() {
-        let resp = do_post(
-            "/mcp",
-            r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
-        )
-        .await;
+        let resp = do_post("/mcp", r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
         let tools = json["result"]["tools"].as_array().unwrap();
@@ -791,7 +802,9 @@ mod tests {
             .method("POST")
             .uri("/mcp")
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#))
+            .body(Body::from(
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#,
+            ))
             .unwrap();
         let resp = ServiceExt::<Request<Body>>::oneshot(app, req)
             .await
@@ -848,27 +861,24 @@ mod tests {
 
     // ── External IdP (OAuth 2.x / OIDC) auth on /mcp ──────────────────────────
 
-    fn external_idp_token(scope: &str, roles: &[&str]) -> (opensnow_auth::ExternalIdpVerifier, String) {
+    fn external_idp_token(
+        scope: &str,
+        roles: &[&str],
+    ) -> (opensnow_auth::ExternalIdpVerifier, String) {
         use base64::Engine;
-        use rsa::traits::PublicKeyParts;
-        use rsa::{
-            RsaPrivateKey,
-            pkcs8::{EncodePrivateKey, LineEnding},
-        };
+        use openssl::rsa::Rsa;
 
-        let mut rng = rand::rngs::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let public_key = private_key.to_public_key();
-        let pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
-        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
+        let key = Rsa::generate(2048).unwrap();
+        let pem = key.private_key_to_pem().unwrap();
+        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(&pem).unwrap();
         let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
         let jwk = opensnow_auth::Jwk {
             kid: Some("idp-kid".to_string()),
             kty: "RSA".to_string(),
             use_: Some("sig".to_string()),
             alg: Some("RS256".to_string()),
-            n: Some(b64(&public_key.n().to_bytes_be())),
-            e: Some(b64(&public_key.e().to_bytes_be())),
+            n: Some(b64(&key.n().to_vec())),
+            e: Some(b64(&key.e().to_vec())),
             crv: None,
             x: None,
             y: None,
@@ -905,7 +915,9 @@ mod tests {
             .header("authorization", format!("Bearer {token}"))
             .body(Body::from(payload))
             .unwrap();
-        ServiceExt::<Request<Body>>::oneshot(app, req).await.unwrap()
+        ServiceExt::<Request<Body>>::oneshot(app, req)
+            .await
+            .unwrap()
     }
 
     #[tokio::test]

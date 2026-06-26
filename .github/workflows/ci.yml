@@ -211,16 +211,14 @@ jobs:
         # Scoped ignores below are transitive advisories with no upstream fix yet
         # (protobuf was removed by dropping prometheus' protobuf feature). Revisit
         # and drop these as fixes land:
-        #   RUSTSEC-2023-0071  rsa            Marvin timing sidechannel — no fixed upgrade
         #   RUSTSEC-2024-0384  instant        unmaintained (transitive)
         #   RUSTSEC-2024-0436  paste          unmaintained (transitive)
         #   RUSTSEC-2025-0134  rustls-pemfile unmaintained (transitive)
         #   RUSTSEC-2026-0097  rand           unsound only with a custom logger (edge case)
         run: |
           cargo audit --deny warnings \
-            --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0384 \
-            --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2025-0134 \
-            --ignore RUSTSEC-2026-0097
+            --ignore RUSTSEC-2024-0384 --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2025-0134 --ignore RUSTSEC-2026-0097
 
   secret-scan:
     name: Secret Scan (gitleaks)

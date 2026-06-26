@@ -55,5 +55,6 @@ http-body-util = "0.1"
 http = "1"
 tempfile = "3"
 datafusion.workspace = true
-rsa = "0.9"
 rand = "0.8"
+openssl = "0.10"
+base64 = "0.22"

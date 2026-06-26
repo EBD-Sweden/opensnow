@@ -192,6 +192,23 @@ def test_public_test_path_evaluation_curl_examples_are_copy_paste_safe():
             if "authorization: Bearer" in line:
                 assert bearer_header in line
 
+
+def test_chatgpt_public_readiness_docs_do_not_claim_unhosted_privacy_or_demo_mcp():
+    privacy = (ROOT / "docs" / "PRIVACY_POLICY.md").read_text()
+    alignment = (ROOT / "docs" / "CHATGPT_APP_ALIGNMENT.md").read_text()
+    control_plane = (ROOT / "docs" / "MCP_CONTROL_PLANE.md").read_text()
+
+    assert "remove before publishing" not in privacy.lower()
+    assert "✅ draft" not in alignment
+    assert "must be hosted at a public URL" in alignment
+    assert "opensnow.ebdsweden.com/privacy" not in alignment
+    assert "opensnow.ebdsweden.com/mcp" not in alignment
+    assert "opensnow.ebdsweden.com/mcp" not in control_plane
+    assert "the public demo does not currently" in control_plane
+    assert "expose `/mcp`" in control_plane
+    assert "self-hosted or customer-hosted" in control_plane
+
+
 def test_client_compatibility_pack_documents_and_smokes_supported_lanes():
     public_path = (ROOT / "docs" / "PUBLIC_TEST_PATH.md").read_text()
     sql_doc = (ROOT / "docs" / "SQL_COMPATIBILITY.md").read_text()

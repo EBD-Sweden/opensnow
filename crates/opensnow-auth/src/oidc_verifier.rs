@@ -154,8 +154,7 @@ impl ExternalIdpVerifier {
 
     /// Validate a bearer token and map it onto OpenSnow [`Claims`].
     pub async fn verify(&self, token: &str) -> Result<Claims> {
-        let header = jsonwebtoken::decode_header(token)
-            .context("failed to decode token header")?;
+        let header = jsonwebtoken::decode_header(token).context("failed to decode token header")?;
 
         // Reject anything but the asymmetric algorithms we expect. This is the
         // primary defense against algorithm-confusion attacks.
@@ -284,12 +283,24 @@ fn is_ec(alg: Algorithm) -> bool {
 
 fn decoding_key_for(alg: &Algorithm, jwk: &Jwk) -> Result<DecodingKey> {
     if is_ec(*alg) {
-        let x = jwk.x.as_deref().ok_or_else(|| anyhow!("EC JWK missing 'x'"))?;
-        let y = jwk.y.as_deref().ok_or_else(|| anyhow!("EC JWK missing 'y'"))?;
+        let x = jwk
+            .x
+            .as_deref()
+            .ok_or_else(|| anyhow!("EC JWK missing 'x'"))?;
+        let y = jwk
+            .y
+            .as_deref()
+            .ok_or_else(|| anyhow!("EC JWK missing 'y'"))?;
         DecodingKey::from_ec_components(x, y).context("invalid EC JWK")
     } else {
-        let n = jwk.n.as_deref().ok_or_else(|| anyhow!("RSA JWK missing 'n'"))?;
-        let e = jwk.e.as_deref().ok_or_else(|| anyhow!("RSA JWK missing 'e'"))?;
+        let n = jwk
+            .n
+            .as_deref()
+            .ok_or_else(|| anyhow!("RSA JWK missing 'n'"))?;
+        let e = jwk
+            .e
+            .as_deref()
+            .ok_or_else(|| anyhow!("RSA JWK missing 'e'"))?;
         DecodingKey::from_rsa_components(n, e).context("invalid RSA JWK")
     }
 }
@@ -313,9 +324,7 @@ fn map_claims(raw: &Value, issuer: &str, default_role: &str) -> Claims {
         .to_string();
     let exp = raw.get("exp").and_then(Value::as_i64).unwrap_or(0);
     let iat = raw.get("iat").and_then(Value::as_i64).unwrap_or(0);
-    let audience = raw
-        .get("aud")
-        .and_then(|v| v.as_str().map(str::to_string));
+    let audience = raw.get("aud").and_then(|v| v.as_str().map(str::to_string));
 
     Claims {
         // External identities have no local DB row.
@@ -383,11 +392,7 @@ mod tests {
     use super::*;
     use base64::Engine;
     use jsonwebtoken::{EncodingKey, Header};
-    use rsa::traits::PublicKeyParts;
-    use rsa::{
-        RsaPrivateKey,
-        pkcs8::{EncodePrivateKey, LineEnding},
-    };
+    use openssl::rsa::Rsa;
     use serde_json::json;
 
     const KID: &str = "test-key-1";
@@ -402,18 +407,16 @@ mod tests {
     }
 
     fn test_idp() -> TestIdp {
-        let mut rng = rand::rngs::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
-        let public_key = private_key.to_public_key();
-        let pem = private_key.to_pkcs8_pem(LineEnding::LF).unwrap();
-        let encoding_key = EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
+        let key = Rsa::generate(2048).unwrap();
+        let pem = key.private_key_to_pem().unwrap();
+        let encoding_key = EncodingKey::from_rsa_pem(&pem).unwrap();
         let jwk = Jwk {
             kid: Some(KID.to_string()),
             kty: "RSA".to_string(),
             use_: Some("sig".to_string()),
             alg: Some("RS256".to_string()),
-            n: Some(b64url(&public_key.n().to_bytes_be())),
-            e: Some(b64url(&public_key.e().to_bytes_be())),
+            n: Some(b64url(&key.n().to_vec())),
+            e: Some(b64url(&key.e().to_vec())),
             crv: None,
             x: None,
             y: None,

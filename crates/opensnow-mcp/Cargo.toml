@@ -30,6 +30,6 @@ http = "1"
 opensnow-core.workspace = true
 jsonwebtoken = "9"
 base64 = "0.22"
-rsa = "0.9"
 rand = "0.8"
 chrono.workspace = true
+openssl = "0.10"

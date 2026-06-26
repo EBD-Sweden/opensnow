@@ -15,7 +15,7 @@ Sources reviewed (2026-06-12):
 
 | Requirement (OpenAI) | Status | Notes |
 |---|---|---|
-| Remote MCP server (not stdio) | ✅ basic | `POST /mcp` on the `opensnow-mcp` HTTP server reuses the stdio JSON-RPC handler. SSE leg not implemented (`GET /mcp` → 405, permitted by the streamable-HTTP spec). |
+| Remote MCP server (not stdio) | ✅ self-hosted / ⚠️ not deployed on public demo | `POST /mcp` on a self-hosted or customer-hosted `opensnow-mcp` HTTP server reuses the stdio JSON-RPC handler. The public demo host is not MCP readiness evidence unless the MCP service is deployed there and auth fail-closed checks are captured. SSE leg not implemented (`GET /mcp` → 405, permitted by the streamable-HTTP spec). |
 | Tool annotations: `readOnlyHint` / `destructiveHint` / `openWorldHint` correctly designated | ✅ | All 22 tools annotated in `tools/list` (`crates/opensnow-agent/src/mcp.rs`), with tests asserting presence. `query` is honestly marked write-capable/destructive since it accepts DDL. Metabase tools are `openWorldHint: true` (external system). |
 | Tool names human-readable, descriptions match behavior | ✅ | Names are specific (`dbt_write_model`, `pipeline_run`, …); descriptions state side effects ("Overwrites any existing schedule", "no DDL is applied"). |
 | Inputs minimal and purpose-driven | ✅ | Each tool takes only what it acts on (SQL text, model name, cron expr). No location, no contact data, no free-form user profiling fields. |
@@ -25,7 +25,7 @@ Sources reviewed (2026-06-12):
 | No full-chat-log reconstruction; return only relevant data | ✅/⚠️ | Tools are request-scoped. ⚠️ `query_history` returns SQL text + user/duration metadata — acceptable for the platform-admin use case, but review before submission and trim fields not needed by the calling context (see gap 5). |
 | Authentication transparent; test credentials with sample demo account | ⚠️ | Bearer/JWT auth works today (fine for ChatGPT *developer-mode connectors*). Published apps need **OAuth 2.1 + dynamic client registration** (gap 1). Demo account exists: `opensnow init --with-sample-data` provisions a fully-featured sample warehouse. |
 | Per-tool authorization (read vs write) | ✅ | `/mcp` now maps each tool to a required JWT scope (`authorize_mcp_tool` in `opensnow-mcp/src/lib.rs`): read tools need a read scope, write/control tools need admin or a control scope, and the `query` tool reuses object-level SQL analysis. Enforced only in JWT mode (demo stays auth-off). Tested. |
-| Privacy policy (categories, purposes, recipients, retention, user controls) | ✅ draft | Drafted at `docs/PRIVACY_POLICY.md`; **must be hosted at a public URL and legally reviewed** before submission (gap 3). |
+| Privacy policy (categories, purposes, recipients, retention, user controls) | ⚠️ self-hosted policy, not hosted demo evidence | `docs/PRIVACY_POLICY.md` is the repository policy for self-hosted/customer-hosted deployments; it must be hosted at a public URL and legally reviewed before any public-directory app submission references it. |
 | Data minimization in outputs | ✅ | `query_history` omits per-user attribution + internal trace id by default (`include_user: true` to opt in). Tool outputs carry no IPs / diagnostic telemetry. |
 | Support contact, developer verification, Platform Dashboard submission | ❌ | Organizational, not code (gap 4). |
 | No ads, no unrelated content insertion | ✅ | N/A — pure tooling. |
@@ -46,9 +46,10 @@ Sources reviewed (2026-06-12):
    `create_table`; `pipeline.admin` → dbt/pipeline/schedule writes;
    `dashboard.admin` → Metabase/chart writes; `query` → object-level SQL
    analysis. Admins bypass. Only enforced in JWT mode.
-3. **Privacy policy** — drafted at `docs/PRIVACY_POLICY.md`. **Remaining:**
-   host at a stable URL (e.g. `opensnow.ebdsweden.com/privacy`) and run a
-   legal/GDPR review before referencing it in the submission.
+3. **Privacy policy** — `docs/PRIVACY_POLICY.md` documents self-hosted/customer
+   hosted behavior. **Remaining for a public-directory submission:** it must be
+   hosted at a public URL and have legal/GDPR review before referencing it in
+   the submission.
 4. **Submission logistics** — OpenAI Platform Dashboard (Owner role /
    `api.apps.write`), developer verification, support contact, screenshots
    that match real behavior, demo credentials pointing at an
@@ -85,8 +86,9 @@ Pass 2 (06-13):
 - **Data minimization** (gap 5) — `query_history` omits user identifier +
   trace id by default. Verified the schema-refactor agent (which reads only
   SQL text) is unaffected.
-- **Privacy policy draft** (gap 3) — `docs/PRIVACY_POLICY.md`; needs hosting +
-  legal review.
+- **Privacy policy** (gap 3) — `docs/PRIVACY_POLICY.md` now scopes itself to
+  self-hosted/customer-hosted deployments; public-directory submission still
+  needs separate public hosting + legal review.
 
 ## Direction change (2026-06-13)
 
