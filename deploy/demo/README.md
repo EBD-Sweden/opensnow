@@ -86,6 +86,45 @@ Manual path: open `https://metabase.ebdsweden.com`:
      docker compose up -d opensnow
    ```
 
+## 5. Rebuild the canonical Krona dashboard
+
+The current public "The Krona's Bargain" dashboard is reproduced by
+`metabase-krona-v3.py`, not the older `metabase-build-krona.py` setup flow. v3 is
+the canonical script for the live step-by-step dashboard linked from the
+OpenSnow console:
+
+```
+https://metabase.ebdsweden.com/public/dashboard/00769301-ca5e-49b9-8626-8ce33dd01ea9
+```
+
+Script roles:
+
+- `metabase-build-krona.py` — legacy v1 builder; creates a separate 7-card Krona
+  dashboard and is kept for provenance.
+- `metabase-krona-narrate.py` — legacy narrator; re-laid an existing Krona
+  dashboard with text cards while reusing existing question cards.
+- `metabase-krona-v2.py` — legacy Europe-wide league-table rebuild for the
+  existing Krona public dashboard.
+- `metabase-krona-v3.py` — recommended/current path; rebuilds the live Krona
+  public dashboard as a focused Sweden/Denmark/Germany/France comparison,
+  creates fresh question cards, enables per-card public links, and preserves the
+  public dashboard UUID above.
+
+Required env vars: `MB_EMAIL`, `MB_PASSWORD`; optional `MB_URL` defaults to
+`https://metabase.ebdsweden.com`. Source secrets from the operator secrets file:
+
+```bash
+set -a; source /path/to/secrets.env; set +a
+cd ./deploy/demo
+export MB_URL=${MB_URL:-https://metabase.ebdsweden.com}
+python3 metabase-krona-v3.py      # prints DASHBOARD .../00769301... + BLOG_UUIDS
+```
+
+Safety: the Krona scripts mutate the configured Metabase instance. They log in,
+create cards, replace the dashboard layout, and enable public links. Run v3 only
+against the live demo when you intend to update that public dashboard, or point
+`MB_URL` at a disposable Metabase instance for rehearsal.
+
 ## Cost
 
 Oracle Always-Free ARM = **$0/mo**. The only spend is the domain you already own.
@@ -104,4 +143,6 @@ normalized Parquet into `sample-data/` and add them to `dbt/models/staging/sourc
 - `opensnow.demo.toml` — public-demo OpenSnow config
 - `seed.Dockerfile` / `seed.sh` — one-time dbt build + Postgres export
 - `metabase-setup.py` — optional one-time Metabase dashboard/public-link setup
+- `metabase-krona-v3.py` — canonical Krona dashboard rebuild script for the
+  public UUID `00769301-ca5e-49b9-8626-8ce33dd01ea9`
 - `dbt/` — the demo dbt project; `sample-data/` — bundled Eurostat Parquet
