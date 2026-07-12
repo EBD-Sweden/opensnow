@@ -14,13 +14,18 @@ def test_public_quickstart_exists_and_covers_required_paths():
         "## 3. Docker Compose demo",
         "## 4. k3d Kubernetes demo",
         "## 5. First SQL query",
-        "## 6. Smoke checks",
-        "## 7. SSO-ready org auth surface",
-        "## 8. Cloud demo path",
+        "## 6. Pipeline and dashboard tab expectations",
+        "## 7. Smoke checks",
+        "## 8. SSO-ready org auth surface",
+        "## 9. Cloud demo path",
         "## Remaining launch blockers",
     ]
+    previous_index = -1
     for section in required_sections:
         assert section in text
+        section_index = text.index(section)
+        assert section_index > previous_index
+        previous_index = section_index
 
     required_commands = [
         "cargo run -p opensnow-cli -- init --with-sample-data --industry both",

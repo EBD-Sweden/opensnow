@@ -240,7 +240,7 @@ Run the optional trusted-local pgwire smoke after starting with `--enable-pgwire
 OPENSNOW_ENABLE_PGWIRE=1 OPENSNOW_PGPORT=15433 scripts/public-smoke.sh
 ```
 
-## 7. SSO-ready org auth surface
+## 8. SSO-ready org auth surface
 
 For public testing, keep auth mode explicit:
 
@@ -260,7 +260,7 @@ OPENSNOW_JWT_SECRET=dev-only-change-me cargo run -p opensnow-cli -- start
 
 Do not reuse demo secrets in production or public hosted demos.
 
-## 8. Cloud demo path
+## 9. Cloud demo path
 
 Fastest safe hosted path before marketplace submission:
 
