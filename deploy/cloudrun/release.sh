@@ -41,7 +41,7 @@ EOF
 echo "==> deploying to Cloud Run"
 export CLOUDSDK_AUTH_ACCESS_TOKEN=$TOKEN
 gcloud run deploy opensnow --image="$IMG" --region=$REGION --project=$PROJECT \
-  --allow-unauthenticated --min-instances=0 --max-instances=2 \
+  --allow-unauthenticated --min-instances=0 --max-instances=1 --concurrency=40 \
   --memory=1Gi --cpu=1 --port=8080 --timeout=60 \
   --set-env-vars="OPENSNOW_ALLOW_PUBLIC=1,RUST_LOG=warn,OPENSNOW_DBT_ARTIFACTS_DIR=/data/dbt-target,OPENSNOW_QUERY_TIMEOUT_SECS=20,OPENSNOW_CHARTS_FILE=/data/charts.json,OPENSNOW_DASHBOARD_URL=https://metabase.ebdsweden.com/public/dashboard/00769301-ca5e-49b9-8626-8ce33dd01ea9,OPENSNOW_DASHBOARD_NAME=The Krona's Bargain"
 
