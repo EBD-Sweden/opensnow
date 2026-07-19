@@ -1,0 +1,11 @@
+# OpenSnow hosted demo (Cloud Run). Public SQL gate; no pgwire (single $PORT).
+[server]
+http_port = 8080
+pg_enabled = false
+host = "0.0.0.0"
+
+[storage]
+warehouse_path = "/data/warehouse"
+
+[catalog]
+path = "/data/catalog.db"
