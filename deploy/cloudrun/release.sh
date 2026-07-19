@@ -11,7 +11,7 @@
 # Needs:  gcloud ADC locally; ssh root@VM; the VM compose stack running.
 set -euo pipefail
 
-VM=root@REDACTED-VM
+VM="${OPENSNOW_VM:?set OPENSNOW_VM, e.g. root@your-vm-host}"
 PROJECT=opensnow-prod
 REGION=us-east1
 TAG=${1:-demo-$(date +%Y%m%d)}

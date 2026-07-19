@@ -114,8 +114,8 @@ Required env vars: `MB_EMAIL`, `MB_PASSWORD`; optional `MB_URL` defaults to
 `https://metabase.ebdsweden.com`. Source secrets from the operator secrets file:
 
 ```bash
-set -a; source /path/to/secrets.env; set +a
-cd ./deploy/demo
+set -a; source /path/to/your/secrets.env  # operator-local, never in git; set +a
+cd deploy/demo
 export MB_URL=${MB_URL:-https://metabase.ebdsweden.com}
 python3 metabase-krona-v3.py      # prints DASHBOARD .../00769301... + BLOG_UUIDS
 ```
