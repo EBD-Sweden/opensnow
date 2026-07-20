@@ -7,7 +7,7 @@ mart, assembles a dashboard, and enables public sharing. Prints the public
 dashboard URL (UUID) at the end so it can be wired into OPENSNOW_DASHBOARD_URL.
 
 Env:
-  MB_URL       base url (default https://metabase.ebdsweden.com)
+  MB_URL       base url (default http://localhost:3000)
   MB_EMAIL     admin email
   MB_PASSWORD  admin password
   PG_PASSWORD  Postgres (eurostat) password — the serving DB Metabase reads
@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.request
 
-MB = os.environ.get("MB_URL", "https://metabase.ebdsweden.com").rstrip("/")
+MB = os.environ.get("MB_URL", "http://localhost:3000").rstrip("/")
 EMAIL = os.environ["MB_EMAIL"]
 PASSWORD = os.environ["MB_PASSWORD"]
 PG_PASSWORD = os.environ["PG_PASSWORD"]

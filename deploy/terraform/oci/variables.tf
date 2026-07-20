@@ -73,19 +73,19 @@ variable "memory_gbs" {
 
 variable "demo_domain" {
   type        = string
-  default     = "opensnow.ebdsweden.com"
+  default     = "opensnow.example.com"
   description = "Public domain for the OpenSnow console + pipeline."
 }
 
 variable "dash_domain" {
   type        = string
-  default     = "metabase.ebdsweden.com"
+  default     = "metabase.example.com"
   description = "Public domain for the embedded Metabase dashboard."
 }
 
 variable "repo_url" {
   type        = string
-  default     = "https://github.com/EBD-Sweden/opensnow"
+  default     = "https://github.com/opensnow/opensnow.git"
   description = "Repo cloned on the VM to build/run the demo bundle."
 }
 

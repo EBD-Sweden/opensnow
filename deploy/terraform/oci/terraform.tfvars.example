@@ -12,5 +12,5 @@ ssh_public_key   = "ssh-ed25519 AAAA... you@host"
 # Optional overrides (defaults shown):
 # ocpus       = 2
 # memory_gbs  = 12
-# demo_domain = "opensnow.ebdsweden.com"
-# dash_domain = "metabase.ebdsweden.com"
+# demo_domain = "opensnow.example.com"
+# dash_domain = "metabase.example.com"

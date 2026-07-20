@@ -1,4 +1,4 @@
-# OpenSnow public-demo config (opensnow.ebdsweden.com).
+# OpenSnow public-demo config (self-hosted example).
 #
 # The REST/console surface is the public-demo SQL gate (SELECT/CTAS/SHOW only);
 # pgwire + trusted SQL are used only INSIDE the compose network (for the dbt

@@ -9,9 +9,9 @@ globally-diversified saver. This dashboard is the evidence behind the blog post.
 Builds ONE dashboard (does not touch the existing seven), lays the cards in a
 2-wide grid, enables a public link, and prints the public URL for embedding.
 
-Env: MB_URL (default https://metabase.ebdsweden.com), MB_EMAIL, MB_PASSWORD
+Env: MB_URL (default http://localhost:3000), MB_EMAIL, MB_PASSWORD
 
-    MB_EMAIL=hao.huang@ebdsweden.com MB_PASSWORD=*** \
+    MB_URL=http://localhost:3000 MB_EMAIL=admin@example.com MB_PASSWORD=*** \
         python3 metabase-build-krona.py
 """
 import json
@@ -20,7 +20,7 @@ import sys
 import urllib.error
 import urllib.request
 
-MB = os.environ.get("MB_URL", "https://metabase.ebdsweden.com").rstrip("/")
+MB = os.environ.get("MB_URL", "http://localhost:3000").rstrip("/")
 EMAIL = os.environ["MB_EMAIL"]
 PASSWORD = os.environ["MB_PASSWORD"]
 S = None

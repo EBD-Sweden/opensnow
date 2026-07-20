@@ -1,6 +1,6 @@
 output "public_ip" {
   value       = hcloud_server.demo.ipv4_address
-  description = "Point opensnow.ebdsweden.com + metabase.ebdsweden.com (A records) at this IP."
+  description = "Point var.demo_domain + var.dash_domain (A records) at this IP."
 }
 
 output "ssh" {

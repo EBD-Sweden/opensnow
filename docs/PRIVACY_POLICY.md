@@ -77,7 +77,7 @@ per connector.
 
 ## 7. The demo instance
 
-The public demo (`opensnow.ebdsweden.com`) uses only **synthetic, deterministic
+The hosted evaluation/demo sandbox uses only **synthetic, deterministic
 sample data** (`demo/public-demo-manifest.json`, `contains_real_customer_data:
 false`). No real personal or customer data is present in the demo.
 

@@ -3,17 +3,17 @@
 
 Each act becomes a ranking across ~27-30 countries with Sweden highlighted
 (a two-series colour split: Sweden cyan, others grey). Reuses dashboard 16
-(public UUID 00769301…) so the dashboard URL + site listing are unchanged,
+identified by OPENSNOW_KRONA_PUBLIC_UUID so the dashboard URL + site listing are unchanged,
 interleaves the step-by-step text cards, enables a public link per chart, and
 prints the per-card UUIDs for the blog.
 
-Env: MB_URL, MB_EMAIL, MB_PASSWORD  (source /path/to/secrets.env)
+Env: MB_URL, MB_EMAIL, MB_PASSWORD, OPENSNOW_KRONA_PUBLIC_UUID
 """
 import json, os, sys, urllib.request, urllib.error
 
-MB = os.environ.get("MB_URL", "https://metabase.ebdsweden.com").rstrip("/")
+MB = os.environ.get("MB_URL", "http://localhost:3000").rstrip("/")
 EMAIL = os.environ["MB_EMAIL"]; PASSWORD = os.environ["MB_PASSWORD"]
-PUBLIC_UUID = "00769301-ca5e-49b9-8626-8ce33dd01ea9"
+PUBLIC_UUID = os.environ["OPENSNOW_KRONA_PUBLIC_UUID"]
 CYAN, GREY = "#22d3ee", "#5b6675"
 S = None
 

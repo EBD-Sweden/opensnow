@@ -59,7 +59,7 @@ Sources reviewed (2026-06-12):
    to opt in); other tool outputs already carry no trace IDs / diagnostic
    metadata.
 6. **(Optional) Apps SDK UI component** — an inline dashboard card rendered in
-   ChatGPT. If it iframes `metabase.ebdsweden.com`, declare it via
+   ChatGPT. If it iframes an external Metabase host, declare it via
    `frameDomains` and expect extended review. Text-URL responses are the
    zero-risk default until then.
 7. **SSE leg of streamable HTTP** — long tools (`pipeline_run`,

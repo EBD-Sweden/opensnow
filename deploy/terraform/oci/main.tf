@@ -3,7 +3,7 @@
 #
 # Provisions a single free-tier ARM VM + minimal networking and bootstraps the
 # `deploy/demo` docker-compose stack via cloud-init. `terraform apply` →
-# opensnow.ebdsweden.com is live (after you point DNS at the output IP and do
+# the configured demo domain is live (after you point DNS at the output IP and do
 # the one-time Metabase setup).
 #
 # Free-tier note: VM.Standard.A1.Flex capacity is often exhausted ("Out of host

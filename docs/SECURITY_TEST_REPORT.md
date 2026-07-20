@@ -3,8 +3,8 @@
 **Date:** 2026-06-07
 **Target:** OpenSnow current `main` build (locally compiled debug binary), HTTP API,
 auth **enabled** (`OPENSNOW_JWT_SECRET`, HS256), bound to loopback. No tests were
-run against the public `opensnow.ebdsweden.com` demo (intrusive scans against
-production are out of scope and could disrupt it).
+run against any hosted public demo (intrusive scans against production are out
+of scope and could disrupt it).
 **Methodology:** OWASP ZAP baseline DAST + scripted two-tenant authorization
 tests + manual SQL-guardrail bypass probes + a full source review of the SQL
 sinks and tenant-scoping paths.

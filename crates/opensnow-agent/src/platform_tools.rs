@@ -360,7 +360,7 @@ impl Tool for ScheduleSetTool {
 
 fn mb_base() -> String {
     std::env::var("METABASE_URL")
-        .unwrap_or_else(|_| "https://metabase.ebdsweden.com".to_string())
+        .unwrap_or_else(|_| "http://localhost:3000".to_string())
         .trim_end_matches('/')
         .to_string()
 }

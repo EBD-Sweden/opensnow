@@ -30,7 +30,7 @@ pub(crate) const PUBLIC_TEST_UI: &str = include_str!("../static/index.html");
 const VEGA_JS: &str = include_str!("../static/vendor/vega.min.js");
 const VEGA_LITE_JS: &str = include_str!("../static/vendor/vega-lite.min.js");
 const VEGA_EMBED_JS: &str = include_str!("../static/vendor/vega-embed.min.js");
-// Social-share (OpenGraph) preview image for opensnow.ebdsweden.com.
+// Social-share (OpenGraph) preview image for self-hosted/demo deployments.
 const OG_IMAGE: &[u8] = include_bytes!("../static/og-image.png");
 const DEPLOYMENT_DOC: &str = include_str!("../../../docs/DEPLOYMENT.md");
 const SQL_COMPATIBILITY_DOC_BODY: &str = include_str!("../../../docs/SQL_COMPATIBILITY.md");

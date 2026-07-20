@@ -13,7 +13,7 @@ import sys
 import urllib.error
 import urllib.request
 
-MB = os.environ.get("MB_URL", "https://metabase.ebdsweden.com").rstrip("/")
+MB = os.environ.get("MB_URL", "http://localhost:3000").rstrip("/")
 EMAIL = os.environ["MB_EMAIL"]
 PASSWORD = os.environ["MB_PASSWORD"]
 S = None

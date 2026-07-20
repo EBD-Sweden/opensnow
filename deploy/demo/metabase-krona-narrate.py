@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Turn the "Krona's Bargain" dashboard into a step-by-step read.
 
-Re-lays the existing dashboard (public UUID 00769301…) with interleaved
+Re-lays an operator-selected existing public dashboard with interleaved
 **text cards** — an intro plus a "### Act N · …  👉 Look for: …" card before each
 chart — matching the "How Europe Borrows & Spends — a step-by-step read" pattern.
 Reuses the existing question cards (so the per-card public links the blog embeds
 keep working) and preserves the dashboard UUID.
 
-Env: MB_URL, MB_EMAIL, MB_PASSWORD  (load /path/to/secrets.env first)
+Env: MB_URL, MB_EMAIL, MB_PASSWORD, OPENSNOW_KRONA_PUBLIC_UUID
 """
 import json, os, sys, urllib.request, urllib.error
 
-MB = os.environ.get("MB_URL", "https://metabase.ebdsweden.com").rstrip("/")
+MB = os.environ.get("MB_URL", "http://localhost:3000").rstrip("/")
 EMAIL = os.environ["MB_EMAIL"]; PASSWORD = os.environ["MB_PASSWORD"]
-PUBLIC_UUID = "00769301-ca5e-49b9-8626-8ce33dd01ea9"
+PUBLIC_UUID = os.environ["OPENSNOW_KRONA_PUBLIC_UUID"]
 S = None
 
 def api(method, path, body=None):

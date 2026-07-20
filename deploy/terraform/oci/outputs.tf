@@ -1,6 +1,6 @@
 output "public_ip" {
   value       = oci_core_instance.demo.public_ip
-  description = "Point opensnow.ebdsweden.com and metabase.ebdsweden.com (A records) at this IP."
+  description = "Point var.demo_domain and var.dash_domain (A records) at this IP."
 }
 
 output "ssh" {

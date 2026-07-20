@@ -5,5 +5,5 @@ ssh_public_key = "ssh-ed25519 AAAA... you@host"
 # Optional overrides (defaults shown):
 # server_type = "cx32"   # 4 vCPU / 8 GB
 # location    = "hel1"    # Helsinki
-# demo_domain = "opensnow.ebdsweden.com"
-# dash_domain = "metabase.ebdsweden.com"
+# demo_domain = "opensnow.example.com"
+# dash_domain = "metabase.example.com"

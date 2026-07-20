@@ -22,10 +22,10 @@ terraform apply
 
 Outputs the server's `public_ip`. Then:
 
-1. **DNS:** A records `opensnow.ebdsweden.com` + `metabase.ebdsweden.com` → that IP.
+1. **DNS:** A records `opensnow.example.com` + `metabase.example.com` → that IP.
 2. cloud-init installs Docker, builds OpenSnow (x86 — ~5–10 min), starts the
    stack, runs the one-time seed. Watch: `ssh root@<ip> 'cloud-init status --wait && docker ps'`.
-3. Caddy gets TLS automatically once DNS resolves → `https://opensnow.ebdsweden.com`.
+3. Caddy gets TLS automatically once DNS resolves → `https://opensnow.example.com`.
 4. Metabase first-run + Public Sharing (see `../../demo/README.md`).
 
 ## Sizes / cost

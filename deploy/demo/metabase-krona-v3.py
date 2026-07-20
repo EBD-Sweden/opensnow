@@ -3,16 +3,16 @@
 
 Sweden vs Denmark, Germany & France — clean coloured line charts over time
 (Sweden cyan, Denmark green, Germany coral, France gold) instead of the busy
-27-country league tables. Rebuilds dashboard 16 (UUID 00769301…) with the
+27-country league tables. Rebuilds an operator-selected existing public dashboard with the
 step-by-step text, enables a public link per chart, prints the per-card UUIDs.
 
-Env: MB_URL, MB_EMAIL, MB_PASSWORD  (source /path/to/secrets.env)
+Env: MB_URL, MB_EMAIL, MB_PASSWORD, OPENSNOW_KRONA_PUBLIC_UUID
 """
 import json, os, sys, urllib.request, urllib.error
 
-MB = os.environ.get("MB_URL", "https://metabase.ebdsweden.com").rstrip("/")
+MB = os.environ.get("MB_URL", "http://localhost:3000").rstrip("/")
 EMAIL = os.environ["MB_EMAIL"]; PASSWORD = os.environ["MB_PASSWORD"]
-PUBLIC_UUID = "00769301-ca5e-49b9-8626-8ce33dd01ea9"
+PUBLIC_UUID = os.environ["OPENSNOW_KRONA_PUBLIC_UUID"]
 COLORS = {"SE": "#22d3ee", "DK": "#34d399", "DE": "#fb7185", "FR": "#fbbf24"}
 S = None
 

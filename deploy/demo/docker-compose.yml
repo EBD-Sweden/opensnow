@@ -1,4 +1,4 @@
-# OpenSnow public demo — opensnow.ebdsweden.com
+# OpenSnow public demo — self-hosted example
 #
 # One-box stack for a free Oracle Cloud Always-Free ARM VM:
 #   Caddy (auto-HTTPS)  →  OpenSnow console + read-only /pipeline  (public, gated)
@@ -6,7 +6,7 @@
 #   OpenSnow pgwire + dbt seed + Postgres: internal to this network only.
 #
 # Usage on the VM:
-#   export OPENSNOW_DEMO_DOMAIN=opensnow.ebdsweden.com
+#   export OPENSNOW_DEMO_DOMAIN=opensnow.example.com
 #   export OPENSNOW_DEMO_PG_PASSWORD=$(openssl rand -hex 16)
 #   docker compose up -d --build
 # Then run the one-time seed:  docker compose run --rm seed
@@ -29,8 +29,10 @@ services:
       OPENSNOW_DBT_ARTIFACTS_DIR: /data/dbt-target
       # Defaults to the Metabase subdomain; set to the full /public/dashboard/<uuid>
       # URL once the public dashboard exists so the link lands on the dashboard.
-      OPENSNOW_DASHBOARD_URL: ${OPENSNOW_DASHBOARD_URL:-https://${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}}
-      OPENSNOW_DASHBOARD_NAME: "Eurostat — EU Housing & Growth"
+      # Dashboards shown in the console's Dashboards tab are config-driven (the
+      # shipped UI hardcodes none). Point this at a JSON array of {name,url};
+      # dashboards.json here is the sample set — replace with your own.
+      OPENSNOW_DASHBOARDS_FILE: /etc/opensnow/dashboards.json
       OPENSNOW_QUERY_TIMEOUT_SECS: "20"
       # Serve the UI from disk so HTML can be hot-swapped without an image rebuild.
       OPENSNOW_UI_DIR: /ui
@@ -38,6 +40,7 @@ services:
       OPENSNOW_CHARTS_FILE: /data/charts.json
     volumes:
       - ./opensnow.demo.toml:/etc/opensnow/opensnow.toml:ro
+      - ./dashboards.json:/etc/opensnow/dashboards.json:ro
       - ../../crates/opensnow-server/static:/ui:ro
       - opensnow-data:/data
     expose: ["8080"]            # internal only — Caddy proxies it
@@ -76,7 +79,7 @@ services:
     restart: unless-stopped
     environment:
       # Metabase on its own subdomain (root path) — robust + clean iframe URLs.
-      MB_SITE_URL: https://${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}
+      MB_SITE_URL: https://${OPENSNOW_DASH_DOMAIN:-metabase.example.com}
       MB_JETTY_PORT: "3000"
       # Persist the app DB (H2) in the volume — without this it lives in the
       # container and is lost on recreate (dashboard + public links gone).
@@ -108,7 +111,7 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       OPENSNOW_DEMO_DOMAIN: ${OPENSNOW_DEMO_DOMAIN:?set OPENSNOW_DEMO_DOMAIN}
-      OPENSNOW_DASH_DOMAIN: ${OPENSNOW_DASH_DOMAIN:-metabase.ebdsweden.com}
+      OPENSNOW_DASH_DOMAIN: ${OPENSNOW_DASH_DOMAIN:-metabase.example.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

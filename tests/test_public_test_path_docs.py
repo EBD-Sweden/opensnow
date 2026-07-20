@@ -262,3 +262,47 @@ def test_public_demo_docs_and_readme_document_stable_paths_and_cleanup():
     assert "demo_customers" in public_demo
     assert "demo_orders" in public_demo
     assert "demo_regions" in public_demo
+
+
+def test_public_oss_demo_assets_do_not_ship_operator_hosting_identifiers():
+    scanned_paths = [
+        ROOT / "deploy" / "cloudrun" / "release.sh",
+        ROOT / "deploy" / "demo" / "README.md",
+        ROOT / "deploy" / "demo" / "docker-compose.yml",
+        ROOT / "deploy" / "demo" / "opensnow.demo.toml",
+        ROOT / "deploy" / "demo" / "metabase-build-dashboards.py",
+        ROOT / "deploy" / "demo" / "metabase-build-krona.py",
+        ROOT / "deploy" / "demo" / "metabase-krona-narrate.py",
+        ROOT / "deploy" / "demo" / "metabase-krona-v2.py",
+        ROOT / "deploy" / "demo" / "metabase-krona-v3.py",
+        ROOT / "deploy" / "demo" / "metabase-setup.py",
+        ROOT / "deploy" / "terraform" / "hetzner" / "outputs.tf",
+        ROOT / "deploy" / "terraform" / "hetzner" / "README.md",
+        ROOT / "deploy" / "terraform" / "hetzner" / "terraform.tfvars.example",
+        ROOT / "deploy" / "terraform" / "hetzner" / "variables.tf",
+        ROOT / "deploy" / "terraform" / "oci" / "main.tf",
+        ROOT / "deploy" / "terraform" / "oci" / "outputs.tf",
+        ROOT / "deploy" / "terraform" / "oci" / "README.md",
+        ROOT / "deploy" / "terraform" / "oci" / "terraform.tfvars.example",
+        ROOT / "deploy" / "terraform" / "oci" / "variables.tf",
+        ROOT / "docs" / "CHATGPT_APP_ALIGNMENT.md",
+        ROOT / "docs" / "MCP_CONTROL_PLANE.md",
+        ROOT / "docs" / "PRIVACY_POLICY.md",
+        ROOT / "docs" / "SECURITY_TEST_REPORT.md",
+        ROOT / "crates" / "opensnow-agent" / "src" / "platform_tools.rs",
+        ROOT / "crates" / "opensnow-server" / "src" / "rest.rs",
+        ROOT / "crates" / "opensnow-server" / "static" / "app.html",
+    ]
+    forbidden_literals = [
+        "opensnow.ebdsweden.com",
+        "metabase.ebdsweden.com",
+        "EBD-Sweden/docs",
+        "opensnow-prod",
+        "OPENSNOW_VM",
+        "00769301-ca5e-49b9-8626-8ce33dd01ea9",
+    ]
+
+    for path in scanned_paths:
+        text = path.read_text()
+        for literal in forbidden_literals:
+            assert literal not in text, f"{path.relative_to(ROOT)} contains operator-only {literal!r}"

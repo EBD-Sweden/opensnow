@@ -2,7 +2,7 @@
 
 `terraform apply` provisions a free-tier **ARM Ampere A1** VM + networking and
 bootstraps the `deploy/demo` docker-compose stack via cloud-init — so
-`opensnow.ebdsweden.com` comes up automatically.
+your configured OpenSnow demo domain comes up automatically.
 
 ## Prerequisites
 
@@ -22,14 +22,14 @@ terraform apply
 
 Outputs the VM's `public_ip`. Then:
 
-1. **DNS:** point `opensnow.ebdsweden.com` and `metabase.ebdsweden.com` (A records)
+1. **DNS:** point `opensnow.example.com` and `metabase.example.com` (A records)
    at that IP.
 2. cloud-init installs Docker, builds OpenSnow (ARM build ~15–30 min on first
    boot), starts the stack, and runs the one-time seed. Watch it:
    ```bash
    ssh ubuntu@<public_ip> 'cloud-init status --wait && docker ps'
    ```
-3. Once DNS resolves, Caddy obtains TLS automatically → `https://opensnow.ebdsweden.com`.
+3. Once DNS resolves, Caddy obtains TLS automatically → `https://opensnow.example.com`.
 4. Do the Metabase first-run + Public Sharing (see `../../demo/README.md`).
 
 ## Gotchas

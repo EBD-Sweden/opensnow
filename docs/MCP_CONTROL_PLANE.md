@@ -51,7 +51,7 @@ the `query` tool; the structured tools above exist for discoverability, safe
 identifier handling, and per-tool authorization.
 
 The dashboard tools need Metabase credentials in the environment:
-`METABASE_URL` (default `https://metabase.ebdsweden.com`), `MB_USER`, `MB_PASSWORD`.
+`METABASE_URL` (default `http://localhost:3000`), `MB_USER`, `MB_PASSWORD`.
 
 ## Authentication modes
 

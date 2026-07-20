@@ -11,7 +11,9 @@
 //! - `OPENSNOW_DBT_SCHEDULE_CRON` — cron expression (5 or 6 field); preferred.
 //! - `OPENSNOW_DBT_SCHEDULE_SECS` — fixed interval in seconds (fallback).
 //! - `OPENSNOW_DBT_ARTIFACTS_DIR` — manifest/run_results dir (default `<project>/target`).
-//! - `OPENSNOW_DASHBOARD_URL` / `OPENSNOW_DASHBOARD_NAME` — downstream dashboard link.
+//! - `OPENSNOW_DASHBOARDS_JSON` / `OPENSNOW_DASHBOARDS_FILE` — JSON array of
+//!   `{name,url}` dashboards for the console's Dashboards tab (config-driven).
+//! - `OPENSNOW_DASHBOARD_URL` / `OPENSNOW_DASHBOARD_NAME` — single-dashboard shorthand.
 //!
 //! The read-only view (`/pipeline`, `GET /api/v1/pipeline`) is public; the
 //! trigger (`POST /api/v1/pipeline/run`) is admin-scoped when auth is enabled.
@@ -345,15 +347,7 @@ async fn pipeline_data(State(state): State<PipelineState>) -> Json<Value> {
         }
     }
 
-    let dashboards = std::env::var("OPENSNOW_DASHBOARD_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty())
-        .map(|url| {
-            let name = std::env::var("OPENSNOW_DASHBOARD_NAME")
-                .unwrap_or_else(|_| "Dashboard".to_string());
-            vec![json!({ "name": name, "url": url })]
-        })
-        .unwrap_or_default();
+    let dashboards = configured_dashboards();
 
     let run = state.run.lock().expect("run state lock").clone();
 
@@ -366,6 +360,56 @@ async fn pipeline_data(State(state): State<PipelineState>) -> Json<Value> {
         "nodes": nodes,
         "dashboards": dashboards,
     }))
+}
+
+/// Dashboards surfaced in the console's Dashboards tab — fully config-driven so
+/// self-hosters point at their own BI without editing the shipped UI. Sources,
+/// merged in order (later entries skipped if the URL is already present):
+///   - `OPENSNOW_DASHBOARDS_JSON`  — inline JSON array `[{"name","url"}, …]`
+///   - `OPENSNOW_DASHBOARDS_FILE`  — path to a file holding that JSON array
+///   - `OPENSNOW_DASHBOARD_URL` (+ `OPENSNOW_DASHBOARD_NAME`) — single-link shorthand
+fn configured_dashboards() -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    if let Ok(j) = std::env::var("OPENSNOW_DASHBOARDS_JSON") {
+        merge_dashboards_json(&mut out, &j);
+    }
+    if let Ok(path) = std::env::var("OPENSNOW_DASHBOARDS_FILE") {
+        if let Ok(contents) = std::fs::read_to_string(path.trim()) {
+            merge_dashboards_json(&mut out, &contents);
+        }
+    }
+    if let Ok(url) = std::env::var("OPENSNOW_DASHBOARD_URL") {
+        let url = url.trim();
+        if !url.is_empty() && !out.iter().any(|d| d.get("url").and_then(Value::as_str) == Some(url)) {
+            let name = std::env::var("OPENSNOW_DASHBOARD_NAME").unwrap_or_else(|_| "Dashboard".to_string());
+            out.push(json!({ "name": name, "url": url }));
+        }
+    }
+    out
+}
+
+/// Parse a JSON array of `{name, url}` objects and append the valid, non-duplicate
+/// ones to `out`. Malformed input is ignored (best-effort config).
+fn merge_dashboards_json(out: &mut Vec<Value>, raw: &str) {
+    if raw.trim().is_empty() {
+        return;
+    }
+    let Ok(Value::Array(items)) = serde_json::from_str::<Value>(raw) else {
+        return;
+    };
+    for item in items {
+        let (Some(name), Some(url)) = (
+            item.get("name").and_then(Value::as_str),
+            item.get("url").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let url = url.trim();
+        if url.is_empty() || out.iter().any(|d| d.get("url").and_then(Value::as_str) == Some(url)) {
+            continue;
+        }
+        out.push(json!({ "name": name.trim(), "url": url }));
+    }
 }
 
 #[cfg(test)]
@@ -383,5 +427,26 @@ mod tests {
     fn interval_next_fire_is_in_the_future() {
         let n = next_fire(&Schedule::Interval(600)).unwrap();
         assert!(n > Utc::now());
+    }
+
+    #[test]
+    fn merge_dashboards_parses_dedups_and_ignores_junk() {
+        let mut out = Vec::new();
+        // valid array with a blank-url entry that must be skipped
+        merge_dashboards_json(
+            &mut out,
+            r#"[{"name":"A","url":"https://x/1"},{"name":"B","url":"https://x/2"},{"name":"blank","url":"  "}]"#,
+        );
+        assert_eq!(out.len(), 2);
+        // duplicate url is not added again; new url is
+        merge_dashboards_json(&mut out, r#"[{"name":"A-dup","url":"https://x/1"},{"name":"C","url":"https://x/3"}]"#);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0]["name"], "A");
+        assert_eq!(out[2]["url"], "https://x/3");
+        // malformed / empty input is a no-op, never panics
+        merge_dashboards_json(&mut out, "not json");
+        merge_dashboards_json(&mut out, "");
+        merge_dashboards_json(&mut out, r#"{"not":"an array"}"#);
+        assert_eq!(out.len(), 3);
     }
 }
